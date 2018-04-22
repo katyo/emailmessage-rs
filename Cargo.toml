@@ -1,0 +1,10 @@
+[package]
+name = "emailmessage"
+version = "0.1.0"
+authors = ["Kayo Phoenix <kayo@illumium.org>"]
+
+[dependencies]
+emailaddress = "^0.4"
+time = "^0.1"
+base64 = "^0.9"
+hyper = "^0.11"
