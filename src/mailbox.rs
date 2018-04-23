@@ -56,7 +56,7 @@ impl FromStr for Mailbox {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::{Address, Mailbox};
 
     #[test]

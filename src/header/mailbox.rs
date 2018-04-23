@@ -95,7 +95,7 @@ fn fmt_mailboxes(m: &[Mailbox], f: &mut HeaderFormatter) -> FmtResult {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::{From, Mailbox};
     use hyper::{Headers};
     

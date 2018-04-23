@@ -45,7 +45,7 @@ fn fmt_text(s: &str, f: &mut HeaderFormatter) -> FmtResult {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::{Subject};
     use hyper::{Headers};
     

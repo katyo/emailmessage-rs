@@ -45,3 +45,37 @@ impl Header for MimeVersion {
         f.fmt_line(&format!("{}.{}", self.major, self.minor))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::{MimeVersion, MIME_VERSION_1_0};
+    use hyper::{Headers};
+    
+    #[test]
+    fn format_mime_version() {
+        let mut headers = Headers::new();
+        
+        headers.set(MIME_VERSION_1_0);
+        
+        assert_eq!(format!("{}", headers),
+                   "MIME-Version: 1.0\r\n");
+
+        headers.set(MimeVersion::new(0, 1));
+        
+        assert_eq!(format!("{}", headers),
+                   "MIME-Version: 0.1\r\n");
+    }
+
+    #[test]
+    fn parse_mime_version() {
+        let mut headers = Headers::new();
+        
+        headers.set_raw("MIME-Version", "1.0");
+        
+        assert_eq!(headers.get::<MimeVersion>(), Some(&MIME_VERSION_1_0));
+
+        headers.set_raw("MIME-Version", "0.1");
+        
+        assert_eq!(headers.get::<MimeVersion>(), Some(&MimeVersion::new(0, 1)));
+    }
+}

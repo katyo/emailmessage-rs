@@ -62,3 +62,37 @@ impl Header for ContentTransferEncoding {
         f.fmt_line(&format!("{}", self))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::{ContentTransferEncoding};
+    use hyper::{Headers};
+    
+    #[test]
+    fn format_content_transfer_encoding() {
+        let mut headers = Headers::new();
+        
+        headers.set(ContentTransferEncoding::SevenBit);
+        
+        assert_eq!(format!("{}", headers),
+                   "Content-Transfer-Encoding: 7bit\r\n");
+
+        headers.set(ContentTransferEncoding::Base64);
+        
+        assert_eq!(format!("{}", headers),
+                   "Content-Transfer-Encoding: base64\r\n");
+    }
+
+    #[test]
+    fn parse_content_transfer_encoding() {
+        let mut headers = Headers::new();
+        
+        headers.set_raw("Content-Transfer-Encoding", "7bit");
+        
+        assert_eq!(headers.get::<ContentTransferEncoding>(), Some(&ContentTransferEncoding::SevenBit));
+
+        headers.set_raw("Content-Transfer-Encoding", "base64");
+        
+        assert_eq!(headers.get::<ContentTransferEncoding>(), Some(&ContentTransferEncoding::Base64));
+    }
+}
