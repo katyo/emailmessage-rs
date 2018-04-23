@@ -123,7 +123,7 @@ where B: Display
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
-        write!(f, "{}", self.body)?;
+        self.body.fmt(f)?;
         Ok(())
     }
 }

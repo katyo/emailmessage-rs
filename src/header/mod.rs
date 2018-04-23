@@ -11,6 +11,6 @@ pub use self::content::*;
 pub use hyper::header::{
     Headers, Header,
     ContentType, ContentLocation, ContentDisposition,
-    DispositionType, DispositionParam,
+    DispositionType, DispositionParam, Charset,
     Date, HttpDate as EmailDate
 };
