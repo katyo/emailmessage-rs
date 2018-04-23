@@ -1,6 +1,11 @@
 extern crate emailaddress;
-extern crate hyper;
 extern crate base64;
+extern crate futures;
+extern crate hyper;
+extern crate tokio_proto;
+
+#[cfg(test)]
+extern crate tokio_core;
 
 mod mailbox;
 mod utf8_b;

@@ -1,11 +1,16 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::{SystemTime};
-use hyper::{Body};
+use std::io::{Error as IoError, ErrorKind};
+use futures::{Sink, Stream, Future};
+use hyper::{Body as HyperBody, Chunk as HyperChunk, Error as HyperError};
+use tokio_proto::streaming::{Body as StreamingBody};
 use header::{Headers, Header, Date, EmailDate};
-use mailbox::{Mailbox};
+
+pub type MailBody = HyperBody;
+//pub type MailBody = StreamingBody<Vec<u8>, IoError>;
 
 #[derive(Clone, Debug)]
-pub struct Message<B = Body> {
+pub struct Message<B = MailBody> {
     headers: Headers,
     body: Option<B>,
 }
@@ -77,15 +82,26 @@ impl<B> Message<B> {
     /// Read the body.
     #[inline]
     pub fn body_ref(&self) -> Option<&B> { self.body.as_ref() }
+    
+    pub fn streaming<C>(self) -> (StreamingBody<Vec<u8>, IoError>, Box<Future<Item = (), Error = IoError>>)
+    where B: Stream<Item = C, Error = HyperError> + 'static,
+          C: Into<HyperChunk>,
+    {
+        let (sender, body) = StreamingBody::pair();
 
-    //pub(crate) fn body_mut(&mut self) -> Option<&mut B> { self.body.as_mut() }
-}
+        let sent = sender.send(Ok(Vec::from(self.headers.to_string())))
+            .map_err(|_| IoError::new(ErrorKind::BrokenPipe, "Unable to send email headers"));
 
-impl Message<Body> {
-    /// Take the `Body` of this message.
-    #[inline]
-    pub fn body(self) -> Body {
-        self.body.unwrap_or_default()
+        (body,
+         if let Some(body) = self.body {
+             Box::new(sent.and_then(|sender| sender.send_all(body.map(|chunk| Ok(chunk.into().as_ref().into()))
+                                                             .map_err(|_| panic!()))
+                                    .map_err(|_| IoError::new(ErrorKind::BrokenPipe, "Unable to send email body")))
+                      .map(|_| ()))
+        } else {
+             Box::new(sent
+                      .map(|_| ()))
+        })
     }
 }
 
@@ -98,41 +114,83 @@ impl<B> Default for Message<B> {
     }
 }
 
-impl Display for Message {
+impl<B> Display for Message<B>
+where B: Display
+{
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        self.headers.fmt(f)
+        self.headers.fmt(f)?;
+        if let Some(ref body) = self.body {
+            write!(f, "{}", body)?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use header;
-    use super::{Message, Mailbox};
+    use mailbox::{Mailbox};
+    use message::{Message};
+
+    use std::str::from_utf8;
+    use futures::{Stream, Future};
+    use tokio_core::reactor::{Core};
     
     #[test]
     fn date_header() {
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
         
-        let email = Message::new()
-            .with_date(Some(date));
+        let email: Message<String> = Message::new()
+            .with_date(Some(date))
+            .with_body("\r\n");
         
-        assert_eq!(format!("{}", email), "Date: Tue, 15 Nov 1994 08:12:31 GMT\r\n");
+        assert_eq!(format!("{}", email), "Date: Tue, 15 Nov 1994 08:12:31 GMT\r\n\r\n");
     }
 
     #[test]
     fn email_message() {
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
         
-        let email = Message::new()
+        let email: Message<String> = Message::new()
             .with_date(Some(date))
             .with_header(header::From(vec![Mailbox::new(Some("Каи".into()), "kayo@example.com".parse().unwrap())]))
             .with_header(header::To(vec!["Pony O.P. <pony@domain.tld>".parse().unwrap()]))
-            .with_header(header::Subject("яңа ел белән!".into()));
+            .with_header(header::Subject("яңа ел белән!".into()))
+            .with_body("\r\nHappy new year!");
         
         assert_eq!(format!("{}", email),
                    concat!("Date: Tue, 15 Nov 1994 08:12:31 GMT\r\n",
                            "From: =?utf-8?b?0JrQsNC4?= <kayo@example.com>\r\n",
                            "To: Pony O.P. <pony@domain.tld>\r\n",
-                           "Subject: =?utf-8?b?0Y/So9CwINC10Lsg0LHQtdC705nQvSE=?=\r\n"));
+                           "Subject: =?utf-8?b?0Y/So9CwINC10Lsg0LHQtdC705nQvSE=?=\r\n",
+                           "\r\n",
+                           "Happy new year!"));
+    }
+
+    #[test]
+    fn message_streaming() {
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
+        
+        let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
+        
+        let email: Message = Message::new()
+            .with_date(Some(date))
+            .with_header(header::From(vec![Mailbox::new(Some("Каи".into()), "kayo@example.com".parse().unwrap())]))
+            .with_header(header::To(vec!["Pony O.P. <pony@domain.tld>".parse().unwrap()]))
+            .with_header(header::Subject("яңа ел белән!".into()))
+            .with_body("\r\nHappy new year!");
+
+        let (body, streamer) = email.streaming();
+
+        handle.spawn(streamer.map_err(|_| ()));
+        
+        assert_eq!(core.run(body.concat2().map(|b| String::from(from_utf8(&b).unwrap()))).unwrap(),
+                   concat!("Date: Tue, 15 Nov 1994 08:12:31 GMT\r\n",
+                           "From: =?utf-8?b?0JrQsNC4?= <kayo@example.com>\r\n",
+                           "To: Pony O.P. <pony@domain.tld>\r\n",
+                           "Subject: =?utf-8?b?0Y/So9CwINC10Lsg0LHQtdC705nQvSE=?=\r\n",
+                           "\r\n",
+                           "Happy new year!"));
     }
 }

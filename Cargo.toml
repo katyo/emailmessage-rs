@@ -8,3 +8,8 @@ emailaddress = "^0.4"
 time = "^0.1"
 base64 = "^0.9"
 hyper = "^0.11"
+futures = "^0.1"
+tokio-proto = "^0.1"
+
+[dev-dependencies]
+tokio-core = "^0.1"
