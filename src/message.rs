@@ -1,24 +1,24 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::{SystemTime};
-use std::io::{Error as IoError, ErrorKind};
-use futures::{Sink, Stream, Future};
-use hyper::{Body as HyperBody, Chunk as HyperChunk, Error as HyperError};
+use futures::{Future, Stream, Sink, stream};
+use hyper::{Body as HyperBody, Chunk as HyperChunk};
 use tokio_proto::streaming::{Body as StreamingBody};
 use header::{Headers, Header, Date, EmailDate};
 
 pub type MailBody = HyperBody;
-//pub type MailBody = StreamingBody<Vec<u8>, IoError>;
 
 #[derive(Clone, Debug)]
 pub struct Message<B = MailBody> {
     headers: Headers,
-    body: Option<B>,
+    body: B,
 }
 
 impl<B> Message<B> {
     /// Constructs a default message
     #[inline]
-    pub fn new() -> Self {
+    pub fn new() -> Self
+    where B: Default
+    {
         Message::default().with_date(None)
     }
 
@@ -67,7 +67,7 @@ impl<B> Message<B> {
     /// Set the body.
     #[inline]
     pub fn set_body<T: Into<B>>(&mut self, body: T) {
-        self.body = Some(body.into());
+        self.body = body.into();
     }
 
     /// Set the body and move the Message.
@@ -81,35 +81,39 @@ impl<B> Message<B> {
 
     /// Read the body.
     #[inline]
-    pub fn body_ref(&self) -> Option<&B> { self.body.as_ref() }
-    
-    pub fn streaming<C>(self) -> (StreamingBody<Vec<u8>, IoError>, Box<Future<Item = (), Error = IoError>>)
-    where B: Stream<Item = C, Error = HyperError> + 'static,
+    pub fn body_ref(&self) -> &B { &self.body }
+
+    /// Create stream from the Message.
+    pub fn to_stream<C, E>(self) -> Box<Stream<Item = Vec<u8>, Error = E>>
+    where B: Stream<Item = C, Error = E> + 'static,
           C: Into<HyperChunk>,
+          E: 'static,
+    {
+        Box::new(stream::once(Ok(Vec::from(self.headers.to_string())))
+                 .chain(self.body.map(|chunk| chunk.into().as_ref().into())))
+    }
+
+    pub fn streaming<C, E>(self) -> (StreamingBody<Vec<u8>, E>, Box<Future<Item = (), Error = E>>)
+    where B: Stream<Item = C, Error = E> + 'static,
+          C: Into<HyperChunk>,
+          E: 'static,
     {
         let (sender, body) = StreamingBody::pair();
-
-        let sent = sender.send(Ok(Vec::from(self.headers.to_string())))
-            .map_err(|_| IoError::new(ErrorKind::BrokenPipe, "Unable to send email headers"));
-
+        
         (body,
-         if let Some(body) = self.body {
-             Box::new(sent.and_then(|sender| sender.send_all(body.map(|chunk| Ok(chunk.into().as_ref().into()))
-                                                             .map_err(|_| panic!()))
-                                    .map_err(|_| IoError::new(ErrorKind::BrokenPipe, "Unable to send email body")))
-                      .map(|_| ()))
-        } else {
-             Box::new(sent
-                      .map(|_| ()))
-        })
+         Box::new(sender.send_all(self.to_stream::<C, E>()
+                                  .map(Ok).map_err(|_| panic!()))
+                  .map(|_| ()).map_err(|_| panic!())))
     }
 }
 
-impl<B> Default for Message<B> {
+impl<B> Default for Message<B>
+where B: Default
+{
     fn default() -> Self {
         Message {
             headers: Headers::default(),
-            body: Option::default()
+            body: B::default()
         }
     }
 }
@@ -119,9 +123,7 @@ where B: Display
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
-        if let Some(ref body) = self.body {
-            write!(f, "{}", body)?;
-        }
+        write!(f, "{}", self.body)?;
         Ok(())
     }
 }
@@ -168,9 +170,8 @@ mod test {
     }
 
     #[test]
-    fn message_streaming() {
+    fn message_to_stream() {
         let mut core = Core::new().unwrap();
-        let handle = core.handle();
         
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
         
@@ -180,10 +181,8 @@ mod test {
             .with_header(header::To(vec!["Pony O.P. <pony@domain.tld>".parse().unwrap()]))
             .with_header(header::Subject("яңа ел белән!".into()))
             .with_body("\r\nHappy new year!");
-
-        let (body, streamer) = email.streaming();
-
-        handle.spawn(streamer.map_err(|_| ()));
+        
+        let body = email.to_stream();
         
         assert_eq!(core.run(body.concat2().map(|b| String::from(from_utf8(&b).unwrap()))).unwrap(),
                    concat!("Date: Tue, 15 Nov 1994 08:12:31 GMT\r\n",
