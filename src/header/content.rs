@@ -49,7 +49,7 @@ impl FromStr for ContentTransferEncoding {
 
 impl Header for ContentTransferEncoding {
     fn header_name() -> &'static str {
-        "MIME-Version"
+        "Content-Transfer-Encoding"
     }
     
     fn parse_header(raw: &Raw) -> HyperResult<Self> {
