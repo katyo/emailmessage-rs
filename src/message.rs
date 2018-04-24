@@ -25,6 +25,14 @@ impl<B> Message<B> {
         }
     }
 
+    /// Constructs just now created message
+    ///
+    /// Shortcut for Self::new().with_date(None)
+    #[inline]
+    pub fn just_now() -> Self where B: Default {
+        Self::new().with_date(None)
+    }
+
     /// Get the headers from the Message.
     #[inline]
     pub fn headers(&self) -> &Headers {
