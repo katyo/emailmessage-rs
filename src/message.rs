@@ -1,11 +1,9 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::{SystemTime};
 use futures::{Future, Stream, Sink, stream};
-use hyper::{Body as HyperBody, Chunk as HyperChunk};
 use tokio_proto::streaming::{Body as StreamingBody};
 use header::{Headers, Header, Date, EmailDate};
-
-pub type MailBody = HyperBody;
+use super::{MailBody, BinaryChunk, BinaryStream};
 
 #[derive(Clone, Debug)]
 pub struct Message<B = MailBody> {
@@ -85,7 +83,7 @@ impl<B> Message<B> {
 
     pub fn streaming<C, E>(self) -> (StreamingBody<Vec<u8>, E>, Box<Future<Item = (), Error = E>>)
     where B: Stream<Item = C, Error = E> + 'static,
-          C: Into<HyperChunk>,
+          C: Into<BinaryChunk>,
           E: 'static,
     {
         let (sender, body) = StreamingBody::pair();
@@ -97,14 +95,11 @@ impl<B> Message<B> {
     }
 }
 
-/// The stream of binary chunks
-///
-pub type BinaryStream<E> = Stream<Item = Vec<u8>, Error = E>;
-
 /// Convert message into boxed stream of binary chunks
+///
 impl<B, C, E> Into<Box<BinaryStream<E>>> for Message<B>
 where B: Stream<Item = C, Error = E> + 'static,
-      C: Into<HyperChunk>,
+      C: Into<BinaryChunk>,
       E: 'static,
 {
     fn into(self) -> Box<BinaryStream<E>> {

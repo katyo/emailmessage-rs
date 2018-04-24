@@ -21,3 +21,11 @@ pub use mailbox::*;
 pub use message::*;
 pub use encoder::*;
 pub use mimebody::*;
+
+pub use hyper::{Body as MailBody, Chunk as BinaryChunk};
+
+use futures::{Stream};
+
+/// The stream of binary chunks
+///
+pub type BinaryStream<E> = Stream<Item = Vec<u8>, Error = E>;

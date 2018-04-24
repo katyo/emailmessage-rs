@@ -1,10 +1,11 @@
 use std::fmt::{Display, Formatter, Error as FmtError, Result as FmtResult};
 use std::str::{from_utf8};
+use futures::{Stream, stream};
 use mime::{Mime};
 use textnonce::{TextNonce};
-use message::{MailBody};
-use encoder::{EncoderChunk};
+use encoder::{EncoderChunk, EncoderStream, EncodedBinaryStream};
 use header::{Header, Headers, ContentType, ContentTransferEncoding};
+use {MailBody, BinaryChunk};
 
 /// Single part
 ///
@@ -118,9 +119,38 @@ where B: AsRef<str>
     }
 }
 
+/// Convert single part into boxed stream of binary chunks
+///
+impl<B, C, E> Into<Box<EncodedBinaryStream<E>>> for SinglePart<B>
+where B: Stream<Item = C, Error = E> + 'static,
+      C: Into<BinaryChunk>,
+      E: 'static,
+{
+    fn into(self) -> Box<EncodedBinaryStream<E>> {
+        Box::new(stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n")))
+                 .chain(EncoderStream::wrap(self.encoding(),
+                                            self.body.map(|chunk| chunk.into().as_ref().into())))
+                 .chain(stream::once(Ok(Vec::from("\r\n"))))
+        )
+    }
+}
+
+/// The kind of multipart
+///
 pub enum MultiPartKind {
+    /// Mixed kind to combine unrelated content parts
+    ///
+    /// For example this kind can be used to mix email message and attachments.
     Mixed,
+
+    /// Alternative kind to join several variants of same email contents.
+    ///
+    /// That kind is recommended to use for joining plain (text) and rich (HTML) messages into single email message.
     Alternative,
+
+    /// Related kind to mix content and related resources.
+    ///
+    /// For example, you can include images into HTML content using that.
     Related,
 }
 
@@ -157,8 +187,15 @@ impl From<MultiPartKind> for Mime {
     }
 }
 
+/// MIME part variants
+///
 pub enum Part<B = MailBody> {
+    /// Single part with content
+    ///
     Single(SinglePart<B>),
+    
+    /// Multiple parts of content
+    ///
     Multi(MultiPart<B>),
 }
 
@@ -169,6 +206,21 @@ where B: AsRef<str>
         match *self {
             Part::Single(ref part) => part.fmt(f),
             Part::Multi(ref part) => part.fmt(f),
+        }
+    }
+}
+
+/// Convert generic part into boxed stream of binary chunks
+///
+impl<B, C, E> Into<Box<EncodedBinaryStream<E>>> for Part<B>
+where B: Stream<Item = C, Error = E> + 'static,
+      C: Into<BinaryChunk>,
+      E: 'static,
+{
+    fn into(self) -> Box<EncodedBinaryStream<E>> {
+        match self {
+            Part::Single(part) => part.into(),
+            Part::Multi(part) => part.into(),
         }
     }
 }
@@ -305,7 +357,7 @@ where B: AsRef<str>
 
         let boundary = self.boundary();
 
-        for ref part in &self.parts {
+        for part in &self.parts {
             "--".fmt(f)?;
             boundary.fmt(f)?;
             "\r\n".fmt(f)?;
@@ -315,6 +367,29 @@ where B: AsRef<str>
         "--".fmt(f)?;
         boundary.fmt(f)?;
         "--\r\n".fmt(f)
+    }
+}
+
+/// Convert single part into boxed stream of binary chunks
+///
+impl<B, C, E> Into<Box<EncodedBinaryStream<E>>> for MultiPart<B>
+where B: Stream<Item = C, Error = E> + 'static,
+      C: Into<BinaryChunk>,
+      E: 'static,
+{
+    fn into(self) -> Box<EncodedBinaryStream<E>> {
+        let boundary = self.boundary();
+        let boundary_open = stream::once(Ok(Vec::from(String::from("--") + &boundary + "\r\n")));
+        let boundary_close = stream::once(Ok(Vec::from(String::from("--") + &boundary + "--\r\n")));
+        
+        let mut chain: Box<EncodedBinaryStream<E>> = Box::new(boundary_open);
+        
+        for part in self.parts {
+            chain = Box::new(chain.chain(stream::once(Ok(Vec::from(String::from("--") + &boundary + "\r\n"))))
+                             .chain(Into::<Box<EncodedBinaryStream<E>>>::into(part)));
+        }
+        
+        Box::new(chain.chain(boundary_close))
     }
 }
 

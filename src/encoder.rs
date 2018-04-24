@@ -3,6 +3,7 @@ use futures::{Stream, Poll, Async};
 use quoted_printable;
 use base64;
 use header::{ContentTransferEncoding};
+use {BinaryStream};
 
 pub enum EncoderError<E> {
     Source(E),
@@ -131,17 +132,17 @@ impl EncoderChunk {
 
 /// Generic data encoder
 ///
-pub struct EncoderStream<S, C> {
+pub struct EncoderStream<S> {
     source: S,
-    encoder: C,
+    encoder: Box<EncoderCodec>,
 }
 
-impl<S, C> EncoderStream<S, C> {
-    pub fn new(source: S, encoder: C) -> Self {
-        EncoderStream { source, encoder }
+impl<S> EncoderStream<S> {
+    pub fn new(source: S, encoder: Box<EncoderCodec>) -> Self {
+        EncoderStream { source, encoder: encoder }
     }
 
-    pub fn wrap<E>(encoding: ContentTransferEncoding, source: S) -> EncoderStream<S, Box<EncoderCodec>>
+    pub fn wrap<E>(encoding: ContentTransferEncoding, source: S) -> EncoderStream<S>
     where S: Stream<Item = Vec<u8>, Error = E> + 'static,
           E: 'static,
     {
@@ -149,9 +150,8 @@ impl<S, C> EncoderStream<S, C> {
     }
 }
 
-impl<S, C, E> Stream for EncoderStream<S, C>
+impl<S, E> Stream for EncoderStream<S>
 where S: Stream<Item = Vec<u8>, Error = E>,
-      C: EncoderCodec,
 {
     type Item = Vec<u8>;
     type Error = EncoderError<E>;
@@ -171,6 +171,9 @@ where S: Stream<Item = Vec<u8>, Error = E>,
         }
     }
 }
+
+/// Encoded binary stream
+pub type EncodedBinaryStream<E> = BinaryStream<EncoderError<E>>;
 
 #[cfg(test)]
 mod test {
