@@ -249,6 +249,30 @@ impl<B> MultiPart<B> {
         MultiPart { headers, parts: Parts::new() }
     }
 
+    /// Constructs MultiPart mixed
+    ///
+    /// Shortcut for MultiPart::new(MultiPartKind::Mixed)
+    #[inline]
+    pub fn mixed() -> Self {
+        MultiPart::new(MultiPartKind::Mixed)
+    }
+
+    /// Constructs MultiPart alternative
+    ///
+    /// Shortcut for MultiPart::new(MultiPartKind::Alternative)
+    #[inline]
+    pub fn alternative() -> Self {
+        MultiPart::new(MultiPartKind::Alternative)
+    }
+
+    /// Constructs MultiPart alternative
+    ///
+    /// Shortcut for MultiPart::new(MultiPartKind::Related)
+    #[inline]
+    pub fn related() -> Self {
+        MultiPart::new(MultiPartKind::Related)
+    }
+
     /// Get the boundary of MultiPart contents.
     #[inline]
     pub fn boundary(&self) -> String {
