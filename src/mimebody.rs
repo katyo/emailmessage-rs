@@ -453,17 +453,21 @@ where B: Stream<Item = C, Error = E> + 'static,
 {
     fn into(self) -> Box<EncodedBinaryStream<E>> {
         let boundary = self.boundary();
-        let boundary_open = stream::once(Ok(Vec::from(String::from("--") + &boundary + "\r\n")));
-        let boundary_close = stream::once(Ok(Vec::from(String::from("--") + &boundary + "--\r\n")));
+
+        let init = Vec::from(String::from("--") + &boundary + "\r\n");
+        let done = Vec::from(String::from("--") + &boundary + "--\r\n");
+
+        let mut chain: Box<EncodedBinaryStream<E>> =
+            Box::new(stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n"))));
         
-        let mut chain: Box<EncodedBinaryStream<E>> = Box::new(boundary_open);
+        chain = Box::new(chain.chain(stream::once(Ok(init.clone()))));
         
         for part in self.parts {
-            chain = Box::new(chain.chain(stream::once(Ok(Vec::from(String::from("--") + &boundary + "\r\n"))))
+            chain = Box::new(chain.chain(stream::once(Ok(init.clone())))
                              .chain(Into::<Box<EncodedBinaryStream<E>>>::into(part)));
         }
         
-        Box::new(chain.chain(boundary_close))
+        Box::new(chain.chain(stream::once(Ok(done))))
     }
 }
 
