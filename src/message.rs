@@ -83,16 +83,6 @@ impl<B> Message<B> {
     #[inline]
     pub fn body_ref(&self) -> &B { &self.body }
 
-    /// Create stream from the Message.
-    pub fn to_stream<C, E>(self) -> Box<Stream<Item = Vec<u8>, Error = E>>
-    where B: Stream<Item = C, Error = E> + 'static,
-          C: Into<HyperChunk>,
-          E: 'static,
-    {
-        Box::new(stream::once(Ok(Vec::from(self.headers.to_string())))
-                 .chain(self.body.map(|chunk| chunk.into().as_ref().into())))
-    }
-
     pub fn streaming<C, E>(self) -> (StreamingBody<Vec<u8>, E>, Box<Future<Item = (), Error = E>>)
     where B: Stream<Item = C, Error = E> + 'static,
           C: Into<HyperChunk>,
@@ -101,9 +91,25 @@ impl<B> Message<B> {
         let (sender, body) = StreamingBody::pair();
         
         (body,
-         Box::new(sender.send_all(self.to_stream::<C, E>()
+         Box::new(sender.send_all(Into::<Box<BinaryStream<E>>>::into(self)
                                   .map(Ok).map_err(|_| panic!()))
                   .map(|_| ()).map_err(|_| panic!())))
+    }
+}
+
+/// The stream of binary chunks
+///
+pub type BinaryStream<E> = Stream<Item = Vec<u8>, Error = E>;
+
+/// Convert message into boxed stream of binary chunks
+impl<B, C, E> Into<Box<BinaryStream<E>>> for Message<B>
+where B: Stream<Item = C, Error = E> + 'static,
+      C: Into<HyperChunk>,
+      E: 'static,
+{
+    fn into(self) -> Box<BinaryStream<E>> {
+        Box::new(stream::once(Ok(Vec::from(self.headers.to_string())))
+                 .chain(self.body.map(|chunk| chunk.into().as_ref().into())))
     }
 }
 
@@ -132,7 +138,7 @@ where B: Display
 mod test {
     use header;
     use mailbox::{Mailbox};
-    use message::{Message};
+    use message::{BinaryStream, Message};
 
     use std::str::from_utf8;
     use futures::{Stream, Future};
@@ -182,7 +188,7 @@ mod test {
             .with_header(header::Subject("яңа ел белән!".into()))
             .with_body("\r\nHappy new year!");
         
-        let body = email.to_stream();
+        let body: Box<BinaryStream<_>> = email.into();
         
         assert_eq!(core.run(body.concat2().map(|b| String::from(from_utf8(&b).unwrap()))).unwrap(),
                    concat!("Date: Tue, 15 Nov 1994 08:12:31 GMT\r\n",
