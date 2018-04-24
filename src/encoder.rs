@@ -1,4 +1,3 @@
-use std::ascii::{AsciiExt};
 use futures::{Stream, Poll, Async};
 use quoted_printable;
 use base64;
@@ -28,8 +27,8 @@ impl SevenBitCodec {
 
 impl EncoderCodec for SevenBitCodec {
     fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
-        if chunk.iter().all(AsciiExt::is_ascii) {
-            self.line_wrapper.encode_chunk(chunk.into())
+        if chunk.iter().all(u8::is_ascii) {
+            self.line_wrapper.encode_chunk(chunk)
         } else {
             Err(())
         }
@@ -118,9 +117,9 @@ impl EncoderCodec for BinaryCodec {
 pub struct EncoderChunk();
 
 impl EncoderChunk {
-    pub fn get(encoding: ContentTransferEncoding) -> Box<EncoderCodec> {
+    pub fn get(encoding: &ContentTransferEncoding) -> Box<EncoderCodec> {
         use self::ContentTransferEncoding::*;
-        match encoding {
+        match *encoding {
             SevenBit => Box::new(SevenBitCodec::new()),
             QuotedPrintable => Box::new(QuotedPrintableCodec::new()),
             Base64 => Box::new(Base64Codec::new()),
@@ -139,10 +138,10 @@ pub struct EncoderStream<S> {
 
 impl<S> EncoderStream<S> {
     pub fn new(source: S, encoder: Box<EncoderCodec>) -> Self {
-        EncoderStream { source, encoder: encoder }
+        EncoderStream { source, encoder }
     }
 
-    pub fn wrap<E>(encoding: ContentTransferEncoding, source: S) -> EncoderStream<S>
+    pub fn wrap<E>(encoding: &ContentTransferEncoding, source: S) -> EncoderStream<S>
     where S: Stream<Item = Vec<u8>, Error = E> + 'static,
           E: 'static,
     {

@@ -32,14 +32,14 @@ impl<B> Default for SinglePart<B>
 where B: Default
 {
     fn default() -> Self {
-        SinglePart { headers: Headers::new(), body: B::default() }
+        Self::new()
     }
 }
 
 impl<B> SinglePart<B> {
     /// Constructs a default SinglePart
     pub fn new() -> Self where B: Default {
-        SinglePart::default()
+        SinglePart { headers: Headers::new(), body: B::default() }
     }
 
     /// Constructs a SinglePart with 7bit encoding
@@ -81,7 +81,7 @@ impl<B> SinglePart<B> {
     #[inline]
     pub fn encoding(&self) -> ContentTransferEncoding {
         self.headers.get::<ContentTransferEncoding>()
-            .map(Clone::clone)
+            .cloned()
             .unwrap_or(ContentTransferEncoding::Binary)
     }
 
@@ -143,7 +143,7 @@ where B: AsRef<str>
         "\r\n".fmt(f)?;
 
         let body = self.body.as_ref().as_bytes().into();
-        let mut encoder = EncoderChunk::get(self.encoding());
+        let mut encoder = EncoderChunk::get(&self.encoding());
         let result = encoder.encode_chunk(body).map_err(|_| FmtError::default())?;
         let body = from_utf8(&result).map_err(|_| FmtError::default())?;
 
@@ -161,7 +161,7 @@ where B: Stream<Item = C, Error = E> + 'static,
 {
     fn into(self) -> Box<EncodedBinaryStream<E>> {
         Box::new(stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n")))
-                 .chain(EncoderStream::wrap(self.encoding(),
+                 .chain(EncoderStream::wrap(&self.encoding(),
                                             self.body.map(|chunk| chunk.into().as_ref().into())))
                  .chain(stream::once(Ok(Vec::from("\r\n"))))
         )

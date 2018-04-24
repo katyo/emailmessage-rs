@@ -1,9 +1,13 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::{SystemTime};
 use futures::{Future, Stream, Sink, stream};
-use tokio_proto::streaming::{Body as StreamingBody};
+use tokio_proto::streaming::{Body as ProtoStreamingBody};
 use header::{Headers, Header, Date, EmailDate};
 use super::{MailBody, BinaryChunk, BinaryStream};
+
+pub type StreamingBody<E> = ProtoStreamingBody<Vec<u8>, E>;
+
+pub type StreamingEnd<E> = Box<Future<Item = (), Error = E>>;
 
 #[derive(Clone, Debug)]
 pub struct Message<B = MailBody> {
@@ -14,10 +18,11 @@ pub struct Message<B = MailBody> {
 impl<B> Message<B> {
     /// Constructs a default message
     #[inline]
-    pub fn new() -> Self
-    where B: Default
-    {
-        Message::default().with_date(None)
+    pub fn new() -> Self where B: Default {
+        Message {
+            headers: Headers::default(),
+            body: B::default()
+        }
     }
 
     /// Get the headers from the Message.
@@ -81,12 +86,12 @@ impl<B> Message<B> {
     #[inline]
     pub fn body_ref(&self) -> &B { &self.body }
 
-    pub fn streaming<C, E>(self) -> (StreamingBody<Vec<u8>, E>, Box<Future<Item = (), Error = E>>)
+    pub fn streaming<C, E>(self) -> (StreamingBody<E>, StreamingEnd<E>)
     where B: Stream<Item = C, Error = E> + 'static,
           C: Into<BinaryChunk>,
           E: 'static,
     {
-        let (sender, body) = StreamingBody::pair();
+        let (sender, body) = ProtoStreamingBody::pair();
         
         (body,
          Box::new(sender.send_all(Into::<Box<BinaryStream<E>>>::into(self)
@@ -112,10 +117,7 @@ impl<B> Default for Message<B>
 where B: Default
 {
     fn default() -> Self {
-        Message {
-            headers: Headers::default(),
-            body: B::default()
-        }
+        Message::new()
     }
 }
 
