@@ -53,19 +53,17 @@ impl EncoderCodec for QuotedPrintableCodec {
 
 /// Base64 codec
 ///
-struct Base64Codec {
-    line_wrapper: EightBitCodec,
-}
+struct Base64Codec();
 
 impl Base64Codec {
     pub fn new() -> Self {
-        Base64Codec { line_wrapper: EightBitCodec::new() }
+        Base64Codec()
     }
 }
 
 impl EncoderCodec for Base64Codec {
     fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
-        self.line_wrapper.encode_chunk(base64::encode(&chunk).as_bytes().into())
+        Ok(base64::encode_config(&chunk, base64::MIME).as_bytes().into())
     }
 }
 
