@@ -12,16 +12,16 @@ pub type StreamingEnd<E> = Box<Future<Item = (), Error = E>>;
 #[derive(Clone, Debug)]
 pub struct Message<B = MailBody> {
     headers: Headers,
-    body: B,
+    body: Option<B>,
 }
 
 impl<B> Message<B> {
     /// Constructs a default message
     #[inline]
-    pub fn new() -> Self where B: Default {
+    pub fn new() -> Self {
         Message {
             headers: Headers::default(),
-            body: B::default()
+            body: None,
         }
     }
 
@@ -29,7 +29,7 @@ impl<B> Message<B> {
     ///
     /// Shortcut for Self::new().with_date(None)
     #[inline]
-    pub fn just_now() -> Self where B: Default {
+    pub fn just_now() -> Self {
         Self::new().with_date(None)
     }
 
@@ -78,7 +78,7 @@ impl<B> Message<B> {
     /// Set the body.
     #[inline]
     pub fn set_body<T: Into<B>>(&mut self, body: T) {
-        self.body = body.into();
+        self.body = Some(body.into());
     }
 
     /// Set the body and move the Message.
@@ -92,7 +92,7 @@ impl<B> Message<B> {
 
     /// Read the body.
     #[inline]
-    pub fn body_ref(&self) -> &B { &self.body }
+    pub fn body_ref(&self) -> Option<&B> { self.body.as_ref() }
 
     pub fn streaming<C, E>(self) -> (StreamingBody<E>, StreamingEnd<E>)
     where B: Stream<Item = C, Error = E> + 'static,
@@ -116,14 +116,17 @@ where B: Stream<Item = C, Error = E> + 'static,
       E: 'static,
 {
     fn into(self) -> Box<BinaryStream<E>> {
-        Box::new(stream::once(Ok(Vec::from(self.headers.to_string())))
-                 .chain(self.body.map(|chunk| chunk.into().as_ref().into())))
+        let headers = stream::once(Ok(Vec::from(self.headers.to_string())));
+
+        if let Some(body) = self.body {
+            Box::new(headers.chain(body.map(|chunk| chunk.into().as_ref().into())))
+        } else {
+            Box::new(headers)
+        }
     }
 }
 
-impl<B> Default for Message<B>
-where B: Default
-{
+impl<B> Default for Message<B> {
     fn default() -> Self {
         Message::new()
     }
@@ -134,7 +137,9 @@ where B: Display
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
-        self.body.fmt(f)?;
+        if let Some(ref body) = self.body {
+            body.fmt(f)?;
+        }
         Ok(())
     }
 }

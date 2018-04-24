@@ -25,12 +25,10 @@ use {MailBody, BinaryChunk};
 ///
 pub struct SinglePart<B = MailBody> {
     headers: Headers,
-    body: B,
+    body: Option<B>,
 }
 
-impl<B> Default for SinglePart<B>
-where B: Default
-{
+impl<B> Default for SinglePart<B> {
     fn default() -> Self {
         Self::new()
     }
@@ -38,42 +36,45 @@ where B: Default
 
 impl<B> SinglePart<B> {
     /// Constructs a default SinglePart
-    pub fn new() -> Self where B: Default {
-        SinglePart { headers: Headers::new(), body: B::default() }
+    pub fn new() -> Self {
+        SinglePart {
+            headers: Headers::new(),
+            body: None,
+        }
     }
 
     /// Constructs a SinglePart with 7bit encoding
     ///
     /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::SevenBit)
-    pub fn seven_bit() -> Self where B: Default {
+    pub fn seven_bit() -> Self {
         SinglePart::new().with_header(ContentTransferEncoding::SevenBit)
     }
 
     /// Constructs a SinglePart with quoted-printable encoding
     ///
     /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::QuotedPrintable)
-    pub fn quoted_printable() -> Self where B: Default {
+    pub fn quoted_printable() -> Self {
         SinglePart::new().with_header(ContentTransferEncoding::QuotedPrintable)
     }
 
     /// Constructs a SinglePart with base64 encoding
     ///
     /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::Base64)
-    pub fn base64() -> Self where B: Default {
+    pub fn base64() -> Self {
         SinglePart::new().with_header(ContentTransferEncoding::Base64)
     }
 
     /// Constructs a SinglePart with 8-bit encoding
     ///
     /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::EightBit)
-    pub fn eight_bit() -> Self where B: Default {
+    pub fn eight_bit() -> Self {
         SinglePart::new().with_header(ContentTransferEncoding::EightBit)
     }
 
     /// Constructs a SinglePart with binary encoding
     ///
     /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::Binary)
-    pub fn binary() -> Self where B: Default {
+    pub fn binary() -> Self {
         SinglePart::new().with_header(ContentTransferEncoding::Binary)
     }
 
@@ -118,7 +119,7 @@ impl<B> SinglePart<B> {
     /// Set the body.
     #[inline]
     pub fn set_body<T: Into<B>>(&mut self, body: T) {
-        self.body = body.into();
+        self.body = Some(body.into());
     }
 
     /// Set the body and move the Part.
@@ -132,7 +133,7 @@ impl<B> SinglePart<B> {
 
     /// Read the body.
     #[inline]
-    pub fn body_ref(&self) -> &B { &self.body }
+    pub fn body_ref(&self) -> Option<&B> { self.body.as_ref() }
 }
 
 impl<B> Display for SinglePart<B>
@@ -142,13 +143,17 @@ where B: AsRef<str>
         self.headers.fmt(f)?;
         "\r\n".fmt(f)?;
 
-        let body = self.body.as_ref().as_bytes().into();
-        let mut encoder = EncoderChunk::get(&self.encoding());
-        let result = encoder.encode_chunk(body).map_err(|_| FmtError::default())?;
-        let body = from_utf8(&result).map_err(|_| FmtError::default())?;
+        if let Some(ref body) = self.body {
+            let body = body.as_ref().as_bytes().into();
+            let mut encoder = EncoderChunk::get(&self.encoding());
+            let result = encoder.encode_chunk(body).map_err(|_| FmtError::default())?;
+            let body = from_utf8(&result).map_err(|_| FmtError::default())?;
 
-        body.fmt(f)?;
-        "\r\n".fmt(f)
+            body.fmt(f)?;
+            "\r\n".fmt(f)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -160,11 +165,17 @@ where B: Stream<Item = C, Error = E> + 'static,
       E: 'static,
 {
     fn into(self) -> Box<EncodedBinaryStream<E>> {
-        Box::new(stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n")))
-                 .chain(EncoderStream::wrap(&self.encoding(),
-                                            self.body.map(|chunk| chunk.into().as_ref().into())))
-                 .chain(stream::once(Ok(Vec::from("\r\n"))))
-        )
+        let headers = stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n")));
+        let encoding = self.encoding();
+
+        if let Some(body) = self.body {
+            Box::new(headers
+                     .chain(EncoderStream::wrap(&encoding,
+                                                body.map(|chunk| chunk.into().as_ref().into())))
+                     .chain(stream::once(Ok(Vec::from("\r\n")))))
+        } else {
+            Box::new(headers)
+        }
     }
 }
 
@@ -232,9 +243,7 @@ pub enum Part<B = MailBody> {
     Multi(MultiPart<B>),
 }
 
-impl<B> Default for Part<B>
-where B: Default
-{
+impl<B> Default for Part<B> {
     fn default() -> Self {
         Part::Single(SinglePart::default())
     }
