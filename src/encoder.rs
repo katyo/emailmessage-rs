@@ -4,6 +4,7 @@ use base64;
 use header::{ContentTransferEncoding};
 use {BinaryStream};
 
+#[derive(Debug, Clone)]
 pub enum EncoderError<E> {
     Source(E),
     Coding,
