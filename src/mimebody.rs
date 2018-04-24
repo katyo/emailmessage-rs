@@ -37,11 +37,44 @@ where B: Default
 }
 
 impl<B> SinglePart<B> {
-    /// Constructs a default Part
-    pub fn new() -> Self
-    where B: Default
-    {
+    /// Constructs a default SinglePart
+    pub fn new() -> Self where B: Default {
         SinglePart::default()
+    }
+
+    /// Constructs a SinglePart with 7bit encoding
+    ///
+    /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::SevenBit)
+    pub fn seven_bit() -> Self where B: Default {
+        SinglePart::new().with_header(ContentTransferEncoding::SevenBit)
+    }
+
+    /// Constructs a SinglePart with quoted-printable encoding
+    ///
+    /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::QuotedPrintable)
+    pub fn quoted_printable() -> Self where B: Default {
+        SinglePart::new().with_header(ContentTransferEncoding::QuotedPrintable)
+    }
+
+    /// Constructs a SinglePart with base64 encoding
+    ///
+    /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::Base64)
+    pub fn base64() -> Self where B: Default {
+        SinglePart::new().with_header(ContentTransferEncoding::Base64)
+    }
+
+    /// Constructs a SinglePart with 8-bit encoding
+    ///
+    /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::EightBit)
+    pub fn eight_bit() -> Self where B: Default {
+        SinglePart::new().with_header(ContentTransferEncoding::EightBit)
+    }
+
+    /// Constructs a SinglePart with binary encoding
+    ///
+    /// Shortcut for SinglePart::new().with_header(ContentTransferEncoding::Binary)
+    pub fn binary() -> Self where B: Default {
+        SinglePart::new().with_header(ContentTransferEncoding::Binary)
     }
 
     /// Get the transfer encoding
