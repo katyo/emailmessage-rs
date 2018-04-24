@@ -232,6 +232,14 @@ pub enum Part<B = MailBody> {
     Multi(MultiPart<B>),
 }
 
+impl<B> Default for Part<B>
+where B: Default
+{
+    fn default() -> Self {
+        Part::Single(SinglePart::default())
+    }
+}
+
 impl<B> Display for Part<B>
 where B: AsRef<str>
 {
