@@ -1,5 +1,7 @@
 # Email Message library for Rust
 
+[![Build Status](https://travis-ci.org/katyo/emailmessage-rs.svg?branch=master)](https://travis-ci.org/katyo/emailmessage-rs)
+
 This project aims to provide a proper strongly typed way to build and parse emails.
 
 ## Features
