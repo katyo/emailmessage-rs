@@ -2,6 +2,16 @@
 name = "emailmessage"
 version = "0.1.0"
 authors = ["Kayo Phoenix <kayo@illumium.org>"]
+description = "Email Message library for Rust"
+homepage = "https://github.com/katyo/emailmessage-rs"
+repository = "https://github.com/katyo/emailmessage-rs.git"
+readme = "README.md"
+keywords = ["email", "message", "mime", "multipart", "format"]
+categories = ["email", "encoding", "data-structures", "parsing", "value-formatting"]
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "katyo/emailmessage-rs", branch = "master" }
 
 [dependencies]
 emailaddress = "^0.4"
