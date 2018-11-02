@@ -1,8 +1,11 @@
-use futures::{Stream, Poll, Async};
-use quoted_printable;
 use base64;
-use header::{ContentTransferEncoding};
-use {BinaryStream};
+use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
+use futures::{Async, Poll, Stream};
+use header::ContentTransferEncoding;
+use quoted_printable;
+use std::error::Error;
+use std::fmt;
+use BinaryStream;
 
 #[derive(Debug, Clone)]
 pub enum EncoderError<E> {
@@ -10,8 +13,22 @@ pub enum EncoderError<E> {
     Coding,
 }
 
-pub trait EncoderCodec {
-    fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()>;
+impl<E> Error for EncoderError<E> where E: fmt::Debug + fmt::Display {}
+
+impl<E> fmt::Display for EncoderError<E>
+where
+    E: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            EncoderError::Source(error) => write!(f, "Source error: {}", error),
+            EncoderError::Coding => f.write_str("Coding error"),
+        }
+    }
+}
+
+pub trait EncoderCodec: Send {
+    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()>;
 }
 
 /// 7bit codec
@@ -22,12 +39,14 @@ struct SevenBitCodec {
 
 impl SevenBitCodec {
     pub fn new() -> Self {
-        SevenBitCodec { line_wrapper: EightBitCodec::new() }
+        SevenBitCodec {
+            line_wrapper: EightBitCodec::new(),
+        }
     }
 }
 
 impl EncoderCodec for SevenBitCodec {
-    fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
+    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()> {
         if chunk.iter().all(u8::is_ascii) {
             self.line_wrapper.encode_chunk(chunk)
         } else {
@@ -47,55 +66,91 @@ impl QuotedPrintableCodec {
 }
 
 impl EncoderCodec for QuotedPrintableCodec {
-    fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
-        Ok(quoted_printable::encode(chunk))
+    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()> {
+        Ok(quoted_printable::encode(chunk).into())
     }
 }
 
 /// Base64 codec
 ///
-struct Base64Codec();
+struct Base64Codec {
+    line_wrapper: EightBitCodec,
+}
 
 impl Base64Codec {
     pub fn new() -> Self {
-        Base64Codec()
+        Base64Codec {
+            line_wrapper: EightBitCodec::new().with_limit(78 - 2),
+        }
     }
 }
 
 impl EncoderCodec for Base64Codec {
-    fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
-        Ok(base64::encode_config(&chunk, base64::MIME).as_bytes().into())
+    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()> {
+        let mut out = BytesMut::with_capacity(chunk.len() * 4 / 3 + 4);
+
+        unsafe {
+            let len = base64::encode_config_slice(&chunk, base64::STANDARD, out.bytes_mut());
+            out.advance_mut(len);
+        }
+
+        self.line_wrapper.encode_chunk(out.freeze())
     }
 }
 
 /// 8bit codec
 ///
 struct EightBitCodec {
+    max_length: usize,
     line_bytes: usize,
 }
 
+const DEFAULT_MAX_LINE_LENGTH: usize = 1000 - 2;
+
 impl EightBitCodec {
     pub fn new() -> Self {
-        EightBitCodec { line_bytes: 0 }
+        EightBitCodec {
+            max_length: DEFAULT_MAX_LINE_LENGTH,
+            line_bytes: 0,
+        }
+    }
+
+    pub fn with_limit(mut self, max_length: usize) -> Self {
+        self.max_length = max_length;
+        self
     }
 }
 
 impl EncoderCodec for EightBitCodec {
-    fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
-        // FIXME: correct line wrap
-        //let line_break = chunk.iter().find(b'\n');
-        let line_bytes = self.line_bytes + chunk.len();
-        Ok(if line_bytes > 1000 - 2 {
-            self.line_bytes = line_bytes - (1000 - 2);
-            let (start, end) = chunk.split_at(self.line_bytes);
-            let mut output = Vec::with_capacity(chunk.len() + 2);
-            output.extend(start);
-            output.extend(b"\r\n");
-            output.extend(end);
-            output
-        } else {
-            chunk
-        })
+    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()> {
+        let mut out = BytesMut::with_capacity(chunk.len() + 20);
+        let mut src = chunk.into_buf();
+        while src.has_remaining() {
+            let line_break = src.bytes().iter().position(|b| *b == b'\n');
+            let mut split_pos = if let Some(line_break) = line_break {
+                line_break
+            } else {
+                src.remaining()
+            };
+            let max_length = self.max_length - self.line_bytes;
+            if split_pos < max_length {
+                // advance line bytes
+                self.line_bytes += split_pos;
+            } else {
+                split_pos = max_length;
+                // reset line bytes
+                self.line_bytes = 0;
+            };
+            let has_remaining = split_pos < src.remaining();
+            let mut taken = src.take(split_pos);
+            out.reserve(split_pos + if has_remaining { 2 } else { 0 });
+            out.put(&mut taken);
+            if has_remaining {
+                out.put_slice(b"\r\n");
+            }
+            src = taken.into_inner();
+        }
+        Ok(out.freeze())
     }
 }
 
@@ -110,7 +165,7 @@ impl BinaryCodec {
 }
 
 impl EncoderCodec for BinaryCodec {
-    fn encode_chunk(&mut self, chunk: Vec<u8>) -> Result<Vec<u8>, ()> {
+    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()> {
         Ok(chunk)
     }
 }
@@ -143,28 +198,28 @@ impl<S> EncoderStream<S> {
     }
 
     pub fn wrap<E>(encoding: &ContentTransferEncoding, source: S) -> EncoderStream<S>
-    where S: Stream<Item = Vec<u8>, Error = E> + 'static,
-          E: 'static,
+    where
+        S: Stream<Item = Bytes, Error = E> + Send + 'static,
+        E: Send + 'static,
     {
         EncoderStream::new(source, EncoderChunk::get(encoding))
     }
 }
 
 impl<S, E> Stream for EncoderStream<S>
-where S: Stream<Item = Vec<u8>, Error = E>,
+where
+    S: Stream<Item = Bytes, Error = E> + Send,
 {
-    type Item = Vec<u8>;
+    type Item = Bytes;
     type Error = EncoderError<E>;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        //self.source.poll().map(|async| async.map(|packet| packet.map(|chunk| self.codec.encode_chunk(&chunk))))
         match self.source.poll() {
-            Ok(Async::Ready(Some(chunk))) =>
-                if let Ok(chunk) = self.encoder.encode_chunk(chunk) {
-                    Ok(Async::Ready(Some(chunk)))
-                } else {
-                    Err(EncoderError::Coding)
-                },
+            Ok(Async::Ready(Some(chunk))) => if let Ok(chunk) = self.encoder.encode_chunk(chunk) {
+                Ok(Async::Ready(Some(chunk)))
+            } else {
+                Err(EncoderError::Coding)
+            },
             Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(error) => Err(EncoderError::Source(error)),
@@ -177,29 +232,39 @@ pub type EncodedBinaryStream<E> = BinaryStream<EncoderError<E>>;
 
 #[cfg(test)]
 mod test {
-    use std::str::{from_utf8};
-    use super::{EncoderCodec, SevenBitCodec, EightBitCodec, QuotedPrintableCodec, Base64Codec, BinaryCodec};
+    use super::{
+        Base64Codec, BinaryCodec, EightBitCodec, EncoderCodec, QuotedPrintableCodec, SevenBitCodec,
+    };
+    use std::str::from_utf8;
 
     #[test]
     fn seven_bit_encode() {
         let mut c = SevenBitCodec::new();
 
-        assert_eq!(c.encode_chunk("Hello, world!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("Hello, world!".into())));
+        assert_eq!(
+            c.encode_chunk("Hello, world!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Hello, world!".into()))
+        );
 
-        assert_eq!(c.encode_chunk("Hello, мир!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Err(()));
+        assert_eq!(
+            c.encode_chunk("Hello, мир!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Err(())
+        );
     }
 
     #[test]
     fn quoted_printable_encode() {
         let mut c = QuotedPrintableCodec::new();
 
-        assert_eq!(c.encode_chunk("Привет, мир!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82, =D0=BC=D0=B8=D1=80!".into())));
+        assert_eq!(
+            c.encode_chunk("Привет, мир!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok(
+                "=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82, =D0=BC=D0=B8=D1=80!".into()
+            ))
+        );
 
         assert_eq!(c.encode_chunk("Текст письма в уникоде".as_bytes().into())
                    .map(|s| from_utf8(&s).map(|s| String::from(s))),
@@ -210,38 +275,76 @@ mod test {
     fn base64_encode() {
         let mut c = Base64Codec::new();
 
-        assert_eq!(c.encode_chunk("Привет, мир!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("0J/RgNC40LLQtdGCLCDQvNC40YAh".into())));
+        assert_eq!(
+            c.encode_chunk("Привет, мир!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("0J/RgNC40LLQtdGCLCDQvNC40YAh".into()))
+        );
 
-        assert_eq!(c.encode_chunk("Текст письма в уникоде".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("0KLQtdC60YHRgiDQv9C40YHRjNC80LAg0LIg0YPQvdC40LrQvtC00LU=".into())));
+        assert_eq!(
+            c.encode_chunk(
+                "Текст письма в уникоде подлиннее"
+                    .as_bytes()
+                    .into()
+            ).map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok(concat!(
+                "0KLQtdC60YHRgiDQv9C40YHRjNC80LAg0LIg0YPQvdC40LrQ\r\n",
+                "vtC00LUg0L/QvtC00LvQuNC90L3QtdC1"
+            ).into()))
+        );
+    }
+
+    #[test]
+    fn base64_encode_long() {
+        let mut c = Base64Codec::new();
+
+        assert_eq!(
+            c.encode_chunk(
+                "Ну прямо супер-длинный текст письма в уникоде, который уж точно ну никак не поместиться в 78 байт, как ни крути, я гарантирую это."
+                    .as_bytes()
+                    .into()
+            ).map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok(
+                concat!("0J3RgyDQv9GA0Y/QvNC+INGB0YPQv9C10YAt0LTQu9C40L3QvdGL0Lkg0YLQtdC60YHRgiDQv9C4\r\n",
+                        "0YHRjNC80LAg0LIg0YPQvdC40LrQvtC00LUsINC60L7RgtC+0YDRi9C5INGD0LYg0YLQvtGH0L3Q\r\n",
+                        "viDQvdGDINC90LjQutCw0Log0L3QtSDQv9C+0LzQtdGB0YLQuNGC0YzRgdGPINCyIDc4INCx0LDQ\r\n",
+                        "udGCLCDQutCw0Log0L3QuCDQutGA0YPRgtC4LCDRjyDQs9Cw0YDQsNC90YLQuNGA0YPRjiDRjdGC\r\n",
+                        "0L4u").into()
+            ))
+        );
     }
 
     #[test]
     fn eight_bit_encode() {
         let mut c = EightBitCodec::new();
 
-        assert_eq!(c.encode_chunk("Hello, world!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("Hello, world!".into())));
+        assert_eq!(
+            c.encode_chunk("Hello, world!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Hello, world!".into()))
+        );
 
-        assert_eq!(c.encode_chunk("Hello, мир!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("Hello, мир!".into())));
+        assert_eq!(
+            c.encode_chunk("Hello, мир!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Hello, мир!".into()))
+        );
     }
 
     #[test]
     fn binary_encode() {
         let mut c = BinaryCodec::new();
 
-        assert_eq!(c.encode_chunk("Hello, world!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("Hello, world!".into())));
+        assert_eq!(
+            c.encode_chunk("Hello, world!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Hello, world!".into()))
+        );
 
-        assert_eq!(c.encode_chunk("Hello, мир!".as_bytes().into())
-                   .map(|s| from_utf8(&s).map(|s| String::from(s))),
-                   Ok(Ok("Hello, мир!".into())));
+        assert_eq!(
+            c.encode_chunk("Hello, мир!".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Hello, мир!".into()))
+        );
     }
 }

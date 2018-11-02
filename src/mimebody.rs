@@ -1,11 +1,12 @@
-use std::fmt::{Display, Formatter, Error as FmtError, Result as FmtResult};
-use std::str::{from_utf8};
-use futures::{Stream, stream};
-use mime::{Mime};
-use textnonce::{TextNonce};
-use encoder::{EncoderChunk, EncoderStream, EncodedBinaryStream};
-use header::{Header, Headers, ContentType, ContentTransferEncoding};
-use {MailBody, BinaryChunk};
+use bytes::Bytes;
+use encoder::{EncodedBinaryStream, EncoderChunk, EncoderStream};
+use futures::{stream, Stream};
+use header::{ContentTransferEncoding, ContentType, Header, Headers};
+use mime::Mime;
+use std::fmt::{Display, Error as FmtError, Formatter, Result as FmtResult};
+use std::str::from_utf8;
+use textnonce::TextNonce;
+use {BinaryChunk, MailBody};
 
 /// Single part
 ///
@@ -81,7 +82,8 @@ impl<B> SinglePart<B> {
     /// Get the transfer encoding
     #[inline]
     pub fn encoding(&self) -> ContentTransferEncoding {
-        self.headers.get::<ContentTransferEncoding>()
+        self.headers
+            .get::<ContentTransferEncoding>()
             .cloned()
             .unwrap_or(ContentTransferEncoding::Binary)
     }
@@ -133,11 +135,14 @@ impl<B> SinglePart<B> {
 
     /// Read the body.
     #[inline]
-    pub fn body_ref(&self) -> Option<&B> { self.body.as_ref() }
+    pub fn body_ref(&self) -> Option<&B> {
+        self.body.as_ref()
+    }
 }
 
 impl<B> Display for SinglePart<B>
-where B: AsRef<str>
+where
+    B: AsRef<str>,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
@@ -146,7 +151,9 @@ where B: AsRef<str>
         if let Some(ref body) = self.body {
             let body = body.as_ref().as_bytes().into();
             let mut encoder = EncoderChunk::get(&self.encoding());
-            let result = encoder.encode_chunk(body).map_err(|_| FmtError::default())?;
+            let result = encoder
+                .encode_chunk(body)
+                .map_err(|_| FmtError::default())?;
             let body = from_utf8(&result).map_err(|_| FmtError::default())?;
 
             body.fmt(f)?;
@@ -160,19 +167,23 @@ where B: AsRef<str>
 /// Convert single part into boxed stream of binary chunks
 ///
 impl<B, C, E> Into<Box<EncodedBinaryStream<E>>> for SinglePart<B>
-where B: Stream<Item = C, Error = E> + 'static,
-      C: Into<BinaryChunk>,
-      E: 'static,
+where
+    B: Stream<Item = C, Error = E> + Send + 'static,
+    C: Into<BinaryChunk>,
+    E: Send + 'static,
 {
     fn into(self) -> Box<EncodedBinaryStream<E>> {
-        let headers = stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n")));
+        let headers = stream::once(Ok(Bytes::from(self.headers.to_string() + "\r\n")));
         let encoding = self.encoding();
 
         if let Some(body) = self.body {
-            Box::new(headers
-                     .chain(EncoderStream::wrap(&encoding,
-                                                body.map(|chunk| chunk.into().as_ref().into())))
-                     .chain(stream::once(Ok(Vec::from("\r\n")))))
+            Box::new(
+                headers
+                    .chain(EncoderStream::wrap(
+                        &encoding,
+                        body.map(|chunk| chunk.into().as_ref().into()),
+                    )).chain(stream::once(Ok(Bytes::from("\r\n")))),
+            )
         } else {
             Box::new(headers)
         }
@@ -200,18 +211,21 @@ pub enum MultiPartKind {
 
 impl MultiPartKind {
     fn to_mime<S: AsRef<str>>(&self, boundary: Option<S>) -> Mime {
-        let boundary = boundary.map(|s| s.as_ref().into())
+        let boundary = boundary
+            .map(|s| s.as_ref().into())
             .unwrap_or_else(|| TextNonce::sized(68).unwrap().into_string());
-        
+
         use self::MultiPartKind::*;
-        format!("multipart/{}; boundary=\"{}\"",
-                match *self {
-                    Mixed => "mixed",
-                    Alternative => "alternative",
-                    Related => "related",
-                },
-                boundary
-        ).parse().unwrap()
+        format!(
+            "multipart/{}; boundary=\"{}\"",
+            match *self {
+                Mixed => "mixed",
+                Alternative => "alternative",
+                Related => "related",
+            },
+            boundary
+        ).parse()
+        .unwrap()
     }
 
     fn from_mime(m: &Mime) -> Option<Self> {
@@ -237,7 +251,7 @@ pub enum Part<B = MailBody> {
     /// Single part with content
     ///
     Single(SinglePart<B>),
-    
+
     /// Multiple parts of content
     ///
     Multi(MultiPart<B>),
@@ -250,7 +264,8 @@ impl<B> Default for Part<B> {
 }
 
 impl<B> Display for Part<B>
-where B: AsRef<str>
+where
+    B: AsRef<str>,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match *self {
@@ -263,9 +278,10 @@ where B: AsRef<str>
 /// Convert generic part into boxed stream of binary chunks
 ///
 impl<B, C, E> Into<Box<EncodedBinaryStream<E>>> for Part<B>
-where B: Stream<Item = C, Error = E> + 'static,
-      C: Into<BinaryChunk>,
-      E: 'static,
+where
+    B: Stream<Item = C, Error = E> + Send + 'static,
+    C: Into<BinaryChunk>,
+    E: Send + 'static,
 {
     fn into(self) -> Box<EncodedBinaryStream<E>> {
         match self {
@@ -284,7 +300,10 @@ pub struct MultiPart<B = MailBody> {
 
 impl<B> Default for MultiPart<B> {
     fn default() -> Self {
-        MultiPart { headers: Headers::new(), parts: Vec::new() }
+        MultiPart {
+            headers: Headers::new(),
+            parts: Vec::new(),
+        }
     }
 }
 
@@ -293,10 +312,13 @@ impl<B> MultiPart<B> {
     #[inline]
     pub fn new(kind: MultiPartKind) -> Self {
         let mut headers = Headers::new();
-        
+
         headers.set(ContentType(kind.into()));
-        
-        MultiPart { headers, parts: Parts::new() }
+
+        MultiPart {
+            headers,
+            parts: Parts::new(),
+        }
     }
 
     /// Constructs MultiPart mixed
@@ -423,7 +445,8 @@ impl<B> MultiPart<B> {
 }
 
 impl<B> Display for MultiPart<B>
-where B: AsRef<str>
+where
+    B: AsRef<str>,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
@@ -447,94 +470,122 @@ where B: AsRef<str>
 /// Convert single part into boxed stream of binary chunks
 ///
 impl<B, C, E> Into<Box<EncodedBinaryStream<E>>> for MultiPart<B>
-where B: Stream<Item = C, Error = E> + 'static,
-      C: Into<BinaryChunk>,
-      E: 'static,
+where
+    B: Stream<Item = C, Error = E> + Send + 'static,
+    C: Into<BinaryChunk>,
+    E: Send + 'static,
 {
     fn into(self) -> Box<EncodedBinaryStream<E>> {
         let boundary = self.boundary();
 
-        let init = Vec::from(String::from("--") + &boundary + "\r\n");
-        let done = Vec::from(String::from("--") + &boundary + "--\r\n");
+        let init = Bytes::from(String::from("--") + &boundary + "\r\n");
+        let done = Bytes::from(String::from("--") + &boundary + "--\r\n");
 
-        let mut chain: Box<EncodedBinaryStream<E>> =
-            Box::new(stream::once(Ok(Vec::from(self.headers.to_string() + "\r\n"))));
-        
+        let mut chain: Box<EncodedBinaryStream<E>> = Box::new(stream::once(Ok(Bytes::from(
+            self.headers.to_string() + "\r\n",
+        ))));
+
         chain = Box::new(chain.chain(stream::once(Ok(init.clone()))));
-        
+
         for part in self.parts {
-            chain = Box::new(chain.chain(stream::once(Ok(init.clone())))
-                             .chain(Into::<Box<EncodedBinaryStream<E>>>::into(part)));
+            chain = Box::new(chain.chain(stream::once(Ok(init.clone()))).chain(Into::<
+                Box<EncodedBinaryStream<E>>,
+            >::into(
+                part
+            )));
         }
-        
+
         Box::new(chain.chain(stream::once(Ok(done))))
     }
 }
 
 #[cfg(test)]
 mod test {
+    use super::{MultiPart, MultiPartKind, Part, SinglePart};
     use header;
-    use super::{Part, SinglePart, MultiPart, MultiPartKind};
 
     #[test]
     fn single_part_binary() {
         let part: SinglePart<String> = SinglePart::new()
-            .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-            .with_header(header::ContentTransferEncoding::Binary)
+            .with_header(header::ContentType(
+                "text/plain; charset=utf8".parse().unwrap(),
+            )).with_header(header::ContentTransferEncoding::Binary)
             .with_body(String::from("Текст письма в уникоде"));
 
-        assert_eq!(format!("{}", part),
-                   concat!("Content-Type: text/plain; charset=utf8\r\n",
-                           "Content-Transfer-Encoding: binary\r\n",
-                           "\r\n",
-                           "Текст письма в уникоде\r\n"));
+        assert_eq!(
+            format!("{}", part),
+            concat!(
+                "Content-Type: text/plain; charset=utf8\r\n",
+                "Content-Transfer-Encoding: binary\r\n",
+                "\r\n",
+                "Текст письма в уникоде\r\n"
+            )
+        );
     }
 
     #[test]
     fn single_part_quoted_printable() {
         let part: SinglePart<String> = SinglePart::new()
-            .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-            .with_header(header::ContentTransferEncoding::QuotedPrintable)
+            .with_header(header::ContentType(
+                "text/plain; charset=utf8".parse().unwrap(),
+            )).with_header(header::ContentTransferEncoding::QuotedPrintable)
             .with_body(String::from("Текст письма в уникоде"));
 
-        assert_eq!(format!("{}", part),
-                   concat!("Content-Type: text/plain; charset=utf8\r\n",
-                           "Content-Transfer-Encoding: quoted-printable\r\n",
-                           "\r\n",
-                           "=D0=A2=D0=B5=D0=BA=D1=81=D1=82 =D0=BF=D0=B8=D1=81=D1=8C=D0=BC=D0=B0 =D0=B2 =\r\n",
-                           "=D1=83=D0=BD=D0=B8=D0=BA=D0=BE=D0=B4=D0=B5\r\n"));
+        assert_eq!(
+            format!("{}", part),
+            concat!(
+                "Content-Type: text/plain; charset=utf8\r\n",
+                "Content-Transfer-Encoding: quoted-printable\r\n",
+                "\r\n",
+                "=D0=A2=D0=B5=D0=BA=D1=81=D1=82 =D0=BF=D0=B8=D1=81=D1=8C=D0=BC=D0=B0 =D0=B2 =\r\n",
+                "=D1=83=D0=BD=D0=B8=D0=BA=D0=BE=D0=B4=D0=B5\r\n"
+            )
+        );
     }
 
     #[test]
     fn single_part_base64() {
         let part: SinglePart<String> = SinglePart::new()
-            .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-            .with_header(header::ContentTransferEncoding::Base64)
+            .with_header(header::ContentType(
+                "text/plain; charset=utf8".parse().unwrap(),
+            )).with_header(header::ContentTransferEncoding::Base64)
             .with_body(String::from("Текст письма в уникоде"));
 
-        assert_eq!(format!("{}", part),
-                   concat!("Content-Type: text/plain; charset=utf8\r\n",
-                           "Content-Transfer-Encoding: base64\r\n",
-                           "\r\n",
-                           "0KLQtdC60YHRgiDQv9C40YHRjNC80LAg0LIg0YPQvdC40LrQvtC00LU=\r\n"));
+        assert_eq!(
+            format!("{}", part),
+            concat!(
+                "Content-Type: text/plain; charset=utf8\r\n",
+                "Content-Transfer-Encoding: base64\r\n",
+                "\r\n",
+                "0KLQtdC60YHRgiDQv9C40YHRjNC80LAg0LIg0YPQvdC40LrQvtC00LU=\r\n"
+            )
+        );
     }
 
     #[test]
     fn multi_part_mixed() {
         let part: MultiPart<String> = MultiPart::new(MultiPartKind::Mixed)
             .with_boundary("F2mTKN843loAAAAA8porEdAjCKhArPxGeahYoZYSftse1GT/84tup+O0bs8eueVuAlMK")
-            .with_part(Part::Single(SinglePart::new()
-                             .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                             .with_header(header::ContentTransferEncoding::Binary)
-                             .with_body(String::from("Текст письма в уникоде"))))
-            .with_singlepart(SinglePart::new()
-                             .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                             .with_header(header::ContentDisposition {
-                                 disposition: header::DispositionType::Attachment,
-                                 parameters: vec![header::DispositionParam::Filename(header::Charset::Ext("utf-8".into()), None, "example.c".as_bytes().into())]
-                             })
-                             .with_header(header::ContentTransferEncoding::Binary)
-                             .with_body(String::from("int main() { return 0; }")));
+            .with_part(Part::Single(
+                SinglePart::new()
+                    .with_header(header::ContentType(
+                        "text/plain; charset=utf8".parse().unwrap(),
+                    )).with_header(header::ContentTransferEncoding::Binary)
+                    .with_body(String::from("Текст письма в уникоде")),
+            )).with_singlepart(
+                SinglePart::new()
+                    .with_header(header::ContentType(
+                        "text/plain; charset=utf8".parse().unwrap(),
+                    )).with_header(header::ContentDisposition {
+                        disposition: header::DispositionType::Attachment,
+                        parameters: vec![header::DispositionParam::Filename(
+                            header::Charset::Ext("utf-8".into()),
+                            None,
+                            "example.c".as_bytes().into(),
+                        )],
+                    }).with_header(header::ContentTransferEncoding::Binary)
+                    .with_body(String::from("int main() { return 0; }")),
+            );
 
         assert_eq!(format!("{}", part),
                    concat!("Content-Type: multipart/mixed;",

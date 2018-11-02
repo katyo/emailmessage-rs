@@ -1,6 +1,6 @@
 [package]
 name = "emailmessage"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Kayo Phoenix <kayo@illumium.org>"]
 description = "Email Message library for Rust"
 homepage = "https://github.com/katyo/emailmessage-rs"
@@ -14,15 +14,16 @@ license = "MIT"
 travis-ci = { repository = "katyo/emailmessage-rs", branch = "master" }
 
 [dependencies]
+bytes = "^0.4"
 emailaddress = "^0.4"
 time = "^0.1"
-base64 = "^0.9"
+base64 = "^0.10"
 quoted_printable = "^0.4"
-hyper = "^0.11"
+hyperx = "^0.13"
+hyper = "^0.12"
 mime = "^0.3"
 textnonce = "^0.6"
 futures = "^0.1"
-tokio-proto = "^0.1"
 
 [dev-dependencies]
-tokio-core = "^0.1"
+tokio = "^0.1"

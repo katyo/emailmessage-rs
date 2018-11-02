@@ -1,7 +1,9 @@
-use std::str::{FromStr, from_utf8};
+use hyperx::{
+    header::{Formatter as HeaderFormatter, Header, Raw},
+    Error as HyperError, Result as HyperResult,
+};
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
-use hyper::header::{Raw, Header, Formatter as HeaderFormatter};
-use hyper::{Result as HyperResult, Error as HyperError};
+use std::str::{from_utf8, FromStr};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContentTransferEncoding {
@@ -42,7 +44,7 @@ impl FromStr for ContentTransferEncoding {
             "base64" => Ok(Base64),
             "8bit" => Ok(EightBit),
             "binary" => Ok(Binary),
-            _ => Err(s.into())
+            _ => Err(s.into()),
         }
     }
 }
@@ -51,13 +53,17 @@ impl Header for ContentTransferEncoding {
     fn header_name() -> &'static str {
         "Content-Transfer-Encoding"
     }
-    
+
     fn parse_header(raw: &Raw) -> HyperResult<Self> {
-        raw.one().ok_or(HyperError::Header)
+        raw.one()
+            .ok_or(HyperError::Header)
             .and_then(|r| from_utf8(r).map_err(|_| HyperError::Header))
-            .and_then(|s| s.parse::<ContentTransferEncoding>().map_err(|_| HyperError::Header))
+            .and_then(|s| {
+                s.parse::<ContentTransferEncoding>()
+                    .map_err(|_| HyperError::Header)
+            })
     }
-    
+
     fn fmt_header(&self, f: &mut HeaderFormatter) -> FmtResult {
         f.fmt_line(&format!("{}", self))
     }
@@ -65,34 +71,44 @@ impl Header for ContentTransferEncoding {
 
 #[cfg(test)]
 mod test {
-    use super::{ContentTransferEncoding};
-    use hyper::{Headers};
-    
+    use super::ContentTransferEncoding;
+    use hyperx::Headers;
+
     #[test]
     fn format_content_transfer_encoding() {
         let mut headers = Headers::new();
-        
+
         headers.set(ContentTransferEncoding::SevenBit);
-        
-        assert_eq!(format!("{}", headers),
-                   "Content-Transfer-Encoding: 7bit\r\n");
+
+        assert_eq!(
+            format!("{}", headers),
+            "Content-Transfer-Encoding: 7bit\r\n"
+        );
 
         headers.set(ContentTransferEncoding::Base64);
-        
-        assert_eq!(format!("{}", headers),
-                   "Content-Transfer-Encoding: base64\r\n");
+
+        assert_eq!(
+            format!("{}", headers),
+            "Content-Transfer-Encoding: base64\r\n"
+        );
     }
 
     #[test]
     fn parse_content_transfer_encoding() {
         let mut headers = Headers::new();
-        
+
         headers.set_raw("Content-Transfer-Encoding", "7bit");
-        
-        assert_eq!(headers.get::<ContentTransferEncoding>(), Some(&ContentTransferEncoding::SevenBit));
+
+        assert_eq!(
+            headers.get::<ContentTransferEncoding>(),
+            Some(&ContentTransferEncoding::SevenBit)
+        );
 
         headers.set_raw("Content-Transfer-Encoding", "base64");
-        
-        assert_eq!(headers.get::<ContentTransferEncoding>(), Some(&ContentTransferEncoding::Base64));
+
+        assert_eq!(
+            headers.get::<ContentTransferEncoding>(),
+            Some(&ContentTransferEncoding::Base64)
+        );
     }
 }

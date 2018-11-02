@@ -1,16 +1,14 @@
-mod mailbox;
-mod textual;
-mod special;
 mod content;
+mod mailbox;
+mod special;
+mod textual;
 
-pub use self::mailbox::*;
-pub use self::textual::*;
-pub use self::special::*;
 pub use self::content::*;
+pub use self::mailbox::*;
+pub use self::special::*;
+pub use self::textual::*;
 
-pub use hyper::header::{
-    Headers, Header,
-    ContentType, ContentLocation, ContentDisposition,
-    DispositionType, DispositionParam, Charset,
-    Date, HttpDate as EmailDate
+pub use hyperx::header::{
+    Charset, ContentDisposition, ContentLocation, ContentType, Date, DispositionParam,
+    DispositionType, Header, Headers, HttpDate as EmailDate,
 };

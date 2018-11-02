@@ -1,25 +1,28 @@
-use std::str::{from_utf8};
-use std::fmt::{Result as FmtResult};
-use hyper::{Result as HyperResult, Error as HyperError};
-use hyper::header::{Raw, Header, Formatter as HeaderFormatter};
+use hyperx::{
+    header::{Formatter as HeaderFormatter, Header, Raw},
+    Error as HyperError, Result as HyperResult,
+};
+use std::fmt::Result as FmtResult;
+use std::str::from_utf8;
 use utf8_b;
 
 macro_rules! text_header {
     ( $type_name: ident, $header_name: expr ) => {
         #[derive(Debug, Clone, PartialEq)]
         pub struct $type_name(pub String);
-        
+
         impl Header for $type_name {
             fn header_name() -> &'static str {
                 $header_name
             }
-            
+
             fn parse_header(raw: &Raw) -> HyperResult<$type_name> {
-                raw.one().ok_or(HyperError::Header)
+                raw.one()
+                    .ok_or(HyperError::Header)
                     .and_then(parse_text)
                     .map($type_name)
             }
-    
+
             fn fmt_header(&self, f: &mut HeaderFormatter) -> FmtResult {
                 fmt_text(&self.0, f)
             }
@@ -46,40 +49,50 @@ fn fmt_text(s: &str, f: &mut HeaderFormatter) -> FmtResult {
 
 #[cfg(test)]
 mod test {
-    use super::{Subject};
-    use hyper::{Headers};
-    
+    use super::Subject;
+    use hyperx::Headers;
+
     #[test]
     fn format_ascii() {
         let mut headers = Headers::new();
         headers.set(Subject("Sample subject".into()));
-        
-        assert_eq!(format!("{}", headers),
-                   "Subject: Sample subject\r\n");
+
+        assert_eq!(format!("{}", headers), "Subject: Sample subject\r\n");
     }
 
     #[test]
     fn format_utf8() {
         let mut headers = Headers::new();
         headers.set(Subject("Тема сообщения".into()));
-        
-        assert_eq!(format!("{}", headers),
-                   "Subject: =?utf-8?b?0KLQtdC80LAg0YHQvtC+0LHRidC10L3QuNGP?=\r\n");
+
+        assert_eq!(
+            format!("{}", headers),
+            "Subject: =?utf-8?b?0KLQtdC80LAg0YHQvtC+0LHRidC10L3QuNGP?=\r\n"
+        );
     }
 
     #[test]
     fn parse_ascii() {
         let mut headers = Headers::new();
         headers.set_raw("Subject", "Sample subject");
-        
-        assert_eq!(headers.get::<Subject>(), Some(&Subject("Sample subject".into())));
+
+        assert_eq!(
+            headers.get::<Subject>(),
+            Some(&Subject("Sample subject".into()))
+        );
     }
 
     #[test]
     fn parse_utf8() {
         let mut headers = Headers::new();
-        headers.set_raw("Subject", "=?utf-8?b?0KLQtdC80LAg0YHQvtC+0LHRidC10L3QuNGP?=");
-        
-        assert_eq!(headers.get::<Subject>(), Some(&Subject("Тема сообщения".into())));
+        headers.set_raw(
+            "Subject",
+            "=?utf-8?b?0KLQtdC80LAg0YHQvtC+0LHRidC10L3QuNGP?=",
+        );
+
+        assert_eq!(
+            headers.get::<Subject>(),
+            Some(&Subject("Тема сообщения".into()))
+        );
     }
 }
