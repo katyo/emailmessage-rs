@@ -1,16 +1,18 @@
 # Email Message library for Rust
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
-[![Crate](https://img.shields.io/crates/v/emailmessage.svg)](https://crates.io/crates/emailmessage)
-[![Build Status](https://travis-ci.org/katyo/emailmessage-rs.svg?branch=master)](https://travis-ci.org/katyo/emailmessage-rs)
+[![Crates.io Package](https://img.shields.io/crates/v/emailmessage.svg)](https://crates.io/crates/emailmessage)
+[![Docs.rs API Documentation](https://docs.rs/emailmessage/badge.svg)](https://docs.rs/emailmessage)
+[![Travis-CI Build Status](https://travis-ci.org/katyo/emailmessage-rs.svg?branch=master)](https://travis-ci.org/katyo/emailmessage-rs)
+[![Appveyor Build status](https://ci.appveyor.com/api/projects/status/29im4ud4xb3r9hlv)](https://ci.appveyor.com/project/katyo/emailmessage-rs)
 
 This project aims to provide a proper strongly typed way to build and parse emails.
 
 ## Features
 
-* Typed headers using `hyper::Header`
-* _TODO_ Streamed building and parsing the message body
-* _TODO_ Compatibility with most mail delivery systems
+* Typed headers using `hyperx::Header`
+* Support for MIME 1.0 multipart contents
+* Streaming messages to save memory usage
 
 ## Usage
 
@@ -24,16 +26,16 @@ The easiest way how we can create email message with simple string
 ```rust
 extern crate emailmessage;
 
-use emailmessage::{header, Message};
+use emailmessage::Message;
 
 fn main() {
-    let m: Message<String> = Message::new()
-        .with_header(header::From(vec!["Incognito <nobody@domain.tld>".parse().unwrap()]))
-        .with_header(header::ReplyTo(vec!["Yuin <yuin@domain.tld>".parse().unwrap()]))
-        .with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_body("\r\nBe happy!");
-    
+    let m: Message<&str> = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .body("Be happy!");
+
     println!("{}", m);
 }
 ```
@@ -66,19 +68,19 @@ extern crate emailmessage;
 use emailmessage::{header, Message, SinglePart};
 
 fn main() {
-    let m: Message<SinglePart<String>> = Message::new()
-        .with_header(header::From(vec!["NoBody <nobody@domain.tld>".parse().unwrap()]))
-        .with_header(header::ReplyTo(vec!["Yuin <yuin@domain.tld>".parse().unwrap()]))
-        .with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_header(header::MIME_VERSION_1_0)
-        .with_body(
-            SinglePart::new()
-            .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-            .with_header(header::ContentTransferEncoding::QuotedPrintable)
-            .with_body("Привет, мир!")
+    let m: Message<SinglePart<&str>> = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .mime_body(
+            SinglePart::builder()
+                .header(header::ContentType(
+                    "text/plain; charset=utf8".parse().unwrap(),
+                )).header(header::ContentTransferEncoding::QuotedPrintable)
+                .body("Привет, мир!"),
         );
-    
+
     println!("{}", m);
 }
 ```
@@ -107,47 +109,44 @@ And the more advanced way is a using multipart MIME contents
 
 ```rust
 extern crate emailmessage;
-
-use emailmessage::{header, Message, SinglePart, MultiPart};
-
+use emailmessage::{header, Message, MultiPart, SinglePart};
 fn main() {
-    let m: Message<MultiPart<String>> = Message::new()
-        .with_header(header::From(vec!["NoBody <nobody@domain.tld>".parse().unwrap()]))
-        .with_header(header::ReplyTo(vec!["Yuin <yuin@domain.tld>".parse().unwrap()]))
-        .with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_header(header::MIME_VERSION_1_0)
-        .with_body(
+    let m: Message<MultiPart<&str>> = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .mime_body(
             MultiPart::mixed()
-            .with_multipart(
+            .multipart(
                 MultiPart::alternative()
-                .with_singlepart(
+                .singlepart(
                     SinglePart::quoted_printable()
-                    .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                    .with_body("Привет, мир!")
+                    .header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
+                    .body("Привет, мир!")
                 )
-                .with_multipart(
+                .multipart(
                     MultiPart::related()
-                    .with_singlepart(
+                    .singlepart(
                         SinglePart::eight_bit()
-                        .with_header(header::ContentType("text/html; charset=utf8".parse().unwrap()))
-                        .with_body("<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>")
+                        .header(header::ContentType("text/html; charset=utf8".parse().unwrap()))
+                        .body("<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>")
                     )
-                    .with_singlepart(
+                    .singlepart(
                         SinglePart::base64()
-                        .with_header(header::ContentType("image/png".parse().unwrap()))
-                        .with_header(header::ContentDisposition {
+                        .header(header::ContentType("image/png".parse().unwrap()))
+                        .header(header::ContentDisposition {
                             disposition: header::DispositionType::Inline,
                             parameters: vec![],
                         })
-                        .with_body("<smile-raw-image-data>")
+                        .body("<smile-raw-image-data>")
                     )
                 )
             )
-            .with_singlepart(
+            .singlepart(
                 SinglePart::seven_bit()
-                .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                .with_header(header::ContentDisposition {
+                .header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
+                .header(header::ContentDisposition {
                                  disposition: header::DispositionType::Attachment,
                                  parameters: vec![
                                      header::DispositionParam::Filename(
@@ -156,10 +155,10 @@ fn main() {
                                      )
                                  ]
                              })
-                .with_body(String::from("int main() { return 0; }"))
+                .body("int main() { return 0; }")
             )
         );
-    
+
     println!("{}", m);
 }
 ```
@@ -223,31 +222,36 @@ The simple example below shows actually sent chunks of streamed message
 (see [format\_stream.rs](examples/format_stream.rs)).
 
 ```rust
-extern crate futures;
-extern crate tokio_core;
 extern crate emailmessage;
+extern crate futures;
+extern crate tokio;
 
+use emailmessage::Message;
+use futures::{Future, Stream};
 use std::str::from_utf8;
-use futures::{Stream};
-use tokio_core::reactor::{Core};
-use emailmessage::{header, Message, BinaryStream};
+use tokio::run;
 
 fn main() {
-    let mut core = Core::new().unwrap();
-    
-    let m: Message = Message::new()
-        .with_header(header::From(vec!["NoBody <nobody@domain.tld>".parse().unwrap()]))
-        .with_header(header::ReplyTo(vec!["Yuin <yuin@domain.tld>".parse().unwrap()]))
-        .with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_body("\r\nBe happy!");
-    
-    let f = Into::<Box<BinaryStream<_>>>::into(m).map(|chunk| {
-        println!("CHUNK[[\n{}]]", from_utf8(&chunk).unwrap());
-        chunk
-    }).concat2();
+    let m: Message = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .body("Be happy!".into());
 
-    core.run(f).unwrap();
+    let f = m
+        .into_stream()
+        .map(|chunk| {
+            println!("CHUNK[[\n{}]]", from_utf8(&chunk).unwrap());
+            chunk
+        }).concat2()
+        .map(|message| {
+            println!("MESSAGE[[\n{}]]", from_utf8(&message).unwrap());
+        }).map_err(|error| {
+            eprintln!("ERROR: {}", error);
+        });
+
+    run(f);
 }
 ```
 
@@ -272,73 +276,74 @@ In real world app we may do some buffering of stream to prevent too short and to
 (see [format\_stream\_multipart.rs](examples/format_stream_multipart.rs))
 
 ```rust
-extern crate futures;
-extern crate tokio_core;
 extern crate emailmessage;
-
+extern crate futures;
+extern crate tokio;
+use emailmessage::{header, Message, MultiPart, SinglePart};
+use futures::{Future, Stream};
 use std::str::from_utf8;
-use futures::{Stream};
-use tokio_core::reactor::{Core};
-use emailmessage::{header, Message, SinglePart, MultiPart, EncodedBinaryStream};
-
+use tokio::run;
 fn main() {
-    let mut core = Core::new().unwrap();
-
     let b: MultiPart = MultiPart::mixed()
-        .with_multipart(
+        .multipart(
             MultiPart::alternative()
-                .with_singlepart(
+                .singlepart(
                     SinglePart::quoted_printable()
-                        .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                        .with_body("Привет, мир!")
-                )
-                .with_multipart(
+                        .header(header::ContentType(
+                            "text/plain; charset=utf8".parse().unwrap(),
+                        )).body("Привет, мир!".into()),
+                ).multipart(
                     MultiPart::related()
-                        .with_singlepart(
+                        .singlepart(
                             SinglePart::eight_bit()
-                                .with_header(header::ContentType("text/html; charset=utf8".parse().unwrap()))
-                                .with_body("<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>")
-                        )
-                        .with_singlepart(
+                                .header(header::ContentType(
+                                    "text/html; charset=utf8".parse().unwrap(),
+                                )).body(
+                                    "<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>".into(),
+                                ),
+                        ).singlepart(
                             SinglePart::base64()
-                                .with_header(header::ContentType("image/png".parse().unwrap()))
-                                .with_header(header::ContentDisposition {
+                                .header(header::ContentType("image/png".parse().unwrap()))
+                                .header(header::ContentDisposition {
                                     disposition: header::DispositionType::Inline,
                                     parameters: vec![],
-                                })
-                                .with_body("<smile-raw-image-data>")
-                        )
-                )
-        )
-        .with_singlepart(
+                                }).body("<smile-raw-image-data>".into()),
+                        ),
+                ),
+        ).singlepart(
             SinglePart::seven_bit()
-                .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                .with_header(header::ContentDisposition {
+                .header(header::ContentType(
+                    "text/plain; charset=utf8".parse().unwrap(),
+                )).header(header::ContentDisposition {
                     disposition: header::DispositionType::Attachment,
-                    parameters: vec![
-                        header::DispositionParam::Filename(
-                            header::Charset::Ext("utf-8".into()),
-                            None, "example.c".as_bytes().into()
-                        )
-                    ]
-                })
-                .with_body(String::from("int main() { return 0; }"))
+                    parameters: vec![header::DispositionParam::Filename(
+                        header::Charset::Ext("utf-8".into()),
+                        None,
+                        "example.c".as_bytes().into(),
+                    )],
+                }).body("int main() { return 0; }".into()),
         );
-    
-    let m: Message<Box<EncodedBinaryStream<_>>> = Message::new()
-        .with_header(header::From(vec!["NoBody <nobody@domain.tld>".parse().unwrap()]))
-        .with_header(header::ReplyTo(vec!["Yuin <yuin@domain.tld>".parse().unwrap()]))
-        .with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_header(header::MIME_VERSION_1_0)
-        .with_body(b);
 
-    let f = Into::<Box<EncodedBinaryStream<_>>>::into(m).map(|chunk| {
-        println!("CHUNK[[\n{}]]", from_utf8(&chunk).unwrap());
-        chunk
-    }).concat2();
+    let m = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .mime_body(b.into_stream());
 
-    core.run(f).unwrap();
+    let f = m
+        .into_stream()
+        .map(|chunk| {
+            println!("CHUNK[[\n{}]]", from_utf8(&chunk).unwrap());
+            chunk
+        }).concat2()
+        .map(|message| {
+            println!("MESSSAGE[[\n{}]]", from_utf8(&message).unwrap());
+        }).map_err(|error| {
+            eprintln!("ERROR: {:?}", error);
+        });
+
+    run(f);
 }
 ```
 
@@ -435,4 +440,5 @@ CHUNK[[
 CHUNK[[
 --1S8dCMR/31oAAAAApHRNMETjK2uRsQs4mVVFKVNujcqnm8FHOXWvqARiaYy9ZmnpQ7uQ--
 ]]
+...
 ```

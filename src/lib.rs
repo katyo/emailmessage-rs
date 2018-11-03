@@ -2,14 +2,13 @@
 
 # Email Message library for Rust
 
-This project aims to provide a proper strongly typed way to build and parse emails.
+This project aims to provide a proper strongly typed way to build emails.
 
 ## Features
 
-* Typed headers using `hyperx::Header`
-* Streamed building the message body
-* _TODO:_ Streamed parsing the message body
-* _TODO:_ Compatibility with most mail delivery systems
+* Typed headers using [`hyperx::Header`]
+* Support for MIME 1.0 multipart contents
+* Streaming messages to save memory usage
 
 ## Usage
 
