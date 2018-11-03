@@ -24,14 +24,6 @@ pub enum Part<B = Body> {
     Multi(MultiPart<B>),
 }
 
-/*
-impl<B> Default for Part<B> {
-    fn default() -> Self {
-        Part::Single(SinglePart::default())
-    }
-}
-*/
-
 impl<B> Display for Part<B>
 where
     B: AsRef<str>,
@@ -308,11 +300,7 @@ where
     type Error = EncoderError<B::Error>;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if let Some(headers) = replace(&mut self.headers, None) {
-            // stream headers
-            let raw = Bytes::from(headers.to_string() + "\r\n");
-            Ok(Async::Ready(Some(raw)))
-        } else {
+        if self.headers.is_none() {
             // stream body
             let res = if let Some(body) = &mut self.body {
                 body.poll()
@@ -321,15 +309,22 @@ where
                 return Ok(Async::Ready(None));
             };
 
-            if let Ok(Async::Ready(None)) = &res {
+            return if let Ok(Async::Ready(None)) = &res {
                 // end of stream
                 self.body = None;
                 Ok(Async::Ready(Some("\r\n".into())))
             } else {
                 // chunk or error
                 res
-            }
+            };
         }
+
+        // stream headers
+        let headers = replace(&mut self.headers, None).unwrap().to_string();
+        let mut out = BytesMut::with_capacity(headers.len() + 2);
+        out.put(&headers);
+        out.put_slice(b"\r\n");
+        Ok(Async::Ready(Some(out.freeze())))
     }
 }
 
@@ -626,62 +621,62 @@ where
     type Error = EncoderError<B::Error>;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if let Some(headers) = replace(&mut self.headers, None) {
-            // stream headers
-            let headers = headers.to_string();
-            let has_parts = !self.parts.is_empty();
-            let mut chunk = BytesMut::with_capacity(
-                headers.len() + 2 // add ending \r\n
-                    + if has_parts {
+        if self.headers.is_none() {
+            // stream body
+            if self.parts.is_empty() {
+                // end of data
+                return Ok(Async::Ready(None));
+            }
+
+            let res = self.parts[0].poll();
+
+            return if let Ok(Async::Ready(None)) = &res {
+                // end of stream
+                self.parts.pop_front();
+
+                let has_parts = !self.parts.is_empty();
+
+                let mut chunk = BytesMut::with_capacity(
+                    self.boundary.len() + 6 // add beginning "--" and ending "--\r\n"
+                        + if has_parts {
+                            self.boundary.len() + 4 // add beginning "--" and ending "\r\n"
+                        } else {
+                            0
+                        },
+                );
+
+                Ok(Async::Ready(Some(chunk.freeze())))
+            } else {
+                // chunk or error
+                res
+            };
+        }
+
+        // stream headers
+        let headers = replace(&mut self.headers, None).unwrap().to_string();
+        let has_parts = !self.parts.is_empty();
+        let mut chunk = BytesMut::with_capacity(
+            headers.len() + 2 // add ending \r\n
+                + if has_parts {
                     // need extra bytes for open boundary
                     self.boundary.len() + 4 // add beginning "--" and ending "\r\n"
                 } else {
                     0
                 },
-            );
+        );
 
-            // put headers
-            chunk.put(&headers);
+        // put headers
+        chunk.put(&headers);
+        chunk.put_slice(b"\r\n");
+
+        // put open boundary
+        if has_parts {
+            chunk.put_slice(b"--");
+            chunk.put(&self.boundary);
             chunk.put_slice(b"\r\n");
-
-            // put open boundary
-            if has_parts {
-                chunk.put_slice(b"--");
-                chunk.put(&self.boundary);
-                chunk.put_slice(b"\r\n");
-            }
-
-            Ok(Async::Ready(Some(chunk.freeze())))
-        } else {
-            // stream body
-            if self.parts.is_empty() {
-                // end of data
-                Ok(Async::Ready(None))
-            } else {
-                let res = self.parts[0].poll();
-
-                if let Ok(Async::Ready(None)) = &res {
-                    // end of stream
-                    self.parts.pop_front();
-
-                    let has_parts = !self.parts.is_empty();
-
-                    let mut chunk = BytesMut::with_capacity(
-                        self.boundary.len() + 6 // add beginning "--" and ending "--\r\n"
-                            + if has_parts {
-                                self.boundary.len() + 4 // add beginning "--" and ending "\r\n"
-                            } else {
-                                0
-                            },
-                    );
-
-                    Ok(Async::Ready(Some(chunk.freeze())))
-                } else {
-                    // chunk or error
-                    res
-                }
-            }
         }
+
+        Ok(Async::Ready(Some(chunk.freeze())))
     }
 }
 

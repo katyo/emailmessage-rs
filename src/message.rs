@@ -219,16 +219,7 @@ where
     type Error = EncoderError<B::Error>;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if let Some(headers) = replace(&mut self.headers, None) {
-            // stream headers
-            let headers = headers.to_string();
-            let mut out = BytesMut::with_capacity(headers.len() + if self.split { 2 } else { 0 });
-            out.put(&headers);
-            if self.split {
-                out.put_slice(b"\r\n");
-            }
-            Ok(Async::Ready(Some(out.freeze())))
-        } else {
+        if self.headers.is_none() {
             // stream body
             let res = if let Some(body) = &mut self.body {
                 body.poll()
@@ -237,15 +228,24 @@ where
                 return Ok(Async::Ready(None));
             };
 
-            if let Ok(Async::Ready(None)) = &res {
+            return if let Ok(Async::Ready(None)) = &res {
                 // end of stream
                 self.body = None;
                 Ok(Async::Ready(None))
             } else {
                 // chunk or error
                 res
-            }
+            };
         }
+
+        // stream headers
+        let headers = replace(&mut self.headers, None).unwrap().to_string();
+        let mut out = BytesMut::with_capacity(headers.len() + if self.split { 2 } else { 0 });
+        out.put(&headers);
+        if self.split {
+            out.put_slice(b"\r\n");
+        }
+        Ok(Async::Ready(Some(out.freeze())))
     }
 }
 
