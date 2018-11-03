@@ -85,7 +85,7 @@ impl MessageBuilder {
     /// Shortcut for `self.mailbox(header::From(mbox))`.
     #[inline]
     pub fn from(self, mbox: Mailbox) -> Self {
-        self.mailbox(header::From(vec![mbox]))
+        self.mailbox(header::From(mbox.into()))
     }
 
     /// Set or add mailbox to `ReplyTo:` header
@@ -93,7 +93,7 @@ impl MessageBuilder {
     /// Shortcut for `self.mailbox(header::ReplyTo(mbox))`.
     #[inline]
     pub fn reply_to(self, mbox: Mailbox) -> Self {
-        self.mailbox(header::ReplyTo(vec![mbox]))
+        self.mailbox(header::ReplyTo(mbox.into()))
     }
 
     /// Set or add mailbox to `To:` header
@@ -101,7 +101,7 @@ impl MessageBuilder {
     /// Shortcut for `self.mailbox(header::To(mbox))`.
     #[inline]
     pub fn to(self, mbox: Mailbox) -> Self {
-        self.mailbox(header::To(vec![mbox]))
+        self.mailbox(header::To(mbox.into()))
     }
 
     /// Set or add mailbox to `Cc:` header
@@ -109,7 +109,7 @@ impl MessageBuilder {
     /// Shortcut for `self.mailbox(header::Cc(mbox))`.
     #[inline]
     pub fn cc(self, mbox: Mailbox) -> Self {
-        self.mailbox(header::Cc(vec![mbox]))
+        self.mailbox(header::Cc(mbox.into()))
     }
 
     /// Set or add mailbox to `Bcc:` header
@@ -117,7 +117,7 @@ impl MessageBuilder {
     /// Shortcut for `self.mailbox(header::Bcc(mbox))`.
     #[inline]
     pub fn bcc(self, mbox: Mailbox) -> Self {
-        self.mailbox(header::Bcc(vec![mbox]))
+        self.mailbox(header::Bcc(mbox.into()))
     }
 
     /// Create message using body
@@ -140,7 +140,7 @@ impl MessageBuilder {
         }
     }
 
-    /// Create message using mime body ([`MultiPart`])
+    /// Create message using mime body ([`MultiPart`](::MultiPart) or [`SinglePart`](::SinglePart))
     ///
     /// Shortcut for `self.mime_1_0().join(body)`.
     #[inline]
@@ -323,12 +323,14 @@ mod test {
 
         let email = Message::builder()
             .date(date)
-            .header(header::From(vec![Mailbox::new(
-                Some("Каи".into()),
-                "kayo@example.com".parse().unwrap(),
-            )])).header(header::To(vec![
-                "Pony O.P. <pony@domain.tld>".parse().unwrap(),
-            ])).header(header::Subject("яңа ел белән!".into()))
+            .header(header::From(
+                vec![Mailbox::new(
+                    Some("Каи".into()),
+                    "kayo@example.com".parse().unwrap(),
+                )].into(),
+            )).header(header::To(
+                vec!["Pony O.P. <pony@domain.tld>".parse().unwrap()].into(),
+            )).header(header::Subject("яңа ел белән!".into()))
             .body("Happy new year!");
 
         assert_eq!(
@@ -350,12 +352,14 @@ mod test {
 
         let email: Message = Message::builder()
             .date(date)
-            .header(header::From(vec![Mailbox::new(
-                Some("Каи".into()),
-                "kayo@example.com".parse().unwrap(),
-            )])).header(header::To(vec![
-                "Pony O.P. <pony@domain.tld>".parse().unwrap(),
-            ])).header(header::Subject("яңа ел белән!".into()))
+            .header(header::From(
+                vec![Mailbox::new(
+                    Some("Каи".into()),
+                    "kayo@example.com".parse().unwrap(),
+                )].into(),
+            )).header(header::To(
+                vec!["Pony O.P. <pony@domain.tld>".parse().unwrap()].into(),
+            )).header(header::Subject("яңа ел белән!".into()))
             .body("Happy new year!".into());
 
         let body = email.into_stream();

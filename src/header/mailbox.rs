@@ -2,8 +2,9 @@ use hyperx::{
     header::{Formatter as HeaderFormatter, Header, Raw},
     Error as HyperError, Result as HyperResult,
 };
-use mailbox::Mailbox;
+use mailbox::{Mailbox, Mailboxes};
 use std::fmt::Result as FmtResult;
+use std::slice::Iter;
 use std::str::from_utf8;
 use utf8_b;
 
@@ -13,7 +14,8 @@ pub trait MailboxesHeader {
 }
 
 macro_rules! mailbox_header {
-    ( $type_name: ident, $header_name: expr ) => {
+    ($(#[$doc:meta])*($type_name: ident, $header_name: expr)) => {
+        $(#[$doc])*
         #[derive(Debug, Clone, PartialEq)]
         pub struct $type_name(pub Mailbox);
 
@@ -26,26 +28,23 @@ macro_rules! mailbox_header {
                 raw.one()
                     .ok_or(HyperError::Header)
                     .and_then(parse_mailboxes)
-                    .and_then(|l| {
-                        if l.is_empty() {
-                            Err(HyperError::Header)
-                        } else {
-                            Ok(l[0].clone())
-                        }
+                    .and_then(|mbs| {
+                        mbs.into_single().ok_or(HyperError::Header)
                     }).map($type_name)
             }
 
             fn fmt_header(&self, f: &mut HeaderFormatter) -> FmtResult {
-                fmt_mailboxes(&[self.0.clone()], f)
+                f.fmt_line(&self.0.recode_name(utf8_b::encode))
             }
         }
     };
 }
 
 macro_rules! mailboxes_header {
-    ( $type_name: ident, $header_name: expr ) => {
+    ($(#[$doc:meta])*($type_name: ident, $header_name: expr)) => {
+        $(#[$doc])*
         #[derive(Debug, Clone, PartialEq)]
-        pub struct $type_name(pub Vec<Mailbox>);
+        pub struct $type_name(pub Mailboxes);
 
         impl MailboxesHeader for $type_name {
             fn join_mailboxes(&mut self, other: Self) {
@@ -62,75 +61,109 @@ macro_rules! mailboxes_header {
                 raw.one()
                     .ok_or(HyperError::Header)
                     .and_then(parse_mailboxes)
-                    .and_then(|l| {
-                        if l.is_empty() {
-                            Err(HyperError::Header)
-                        } else {
-                            Ok(l)
-                        }
-                    }).map($type_name)
+                    .map($type_name)
             }
 
             fn fmt_header(&self, f: &mut HeaderFormatter) -> FmtResult {
-                fmt_mailboxes(&self.0, f)
+                format_mailboxes(self.0.iter(), f)
             }
         }
     };
 }
 
-mailbox_header!(Sender, "Sender");
-mailboxes_header!(From, "From");
-mailboxes_header!(ReplyTo, "Reply-To");
+mailbox_header! {
+    /**
 
-mailboxes_header!(To, "To");
-mailboxes_header!(Cc, "Cc");
-mailboxes_header!(Bcc, "Bcc");
+    `Sender:` header
 
-fn parse_mailboxes(raw: &[u8]) -> HyperResult<Vec<Mailbox>> {
+    This header contains [`Mailbox`](::Mailbox) associated with sender.
+
+    ```no_test
+    header::Sender("Mr. Sender <sender@example.com>".parse().unwrap())
+    ```
+     */
+    (Sender, "Sender")
+}
+
+mailboxes_header! {
+    /**
+
+    `From:` header
+
+    This header contains [`Mailboxes`](::Mailboxes).
+
+     */
+    (From, "From")
+}
+
+mailboxes_header! {
+    /**
+
+    `Reply-To:` header
+
+    This header contains [`Mailboxes`](::Mailboxes).
+
+     */
+    (ReplyTo, "Reply-To")
+}
+
+mailboxes_header! {
+    /**
+
+    `To:` header
+
+    This header contains [`Mailboxes`](::Mailboxes).
+
+     */
+    (To, "To")
+}
+
+mailboxes_header! {
+    /**
+
+    `Cc:` header
+
+    This header contains [`Mailboxes`](::Mailboxes).
+
+     */
+    (Cc, "Cc")
+}
+
+mailboxes_header! {
+    /**
+
+    `Bcc:` header
+
+    This header contains [`Mailboxes`](::Mailboxes).
+
+     */
+    (Bcc, "Bcc")
+}
+
+fn parse_mailboxes(raw: &[u8]) -> HyperResult<Mailboxes> {
     if let Ok(src) = from_utf8(raw) {
-        if let Ok(mbs) = src
-            .split(',')
-            .map(|m| {
-                m.trim()
-                    .parse()
-                    .map_err(|_| ())
-                    .and_then(|Mailbox { name, addr }| {
-                        if let Some(name) = name {
-                            if let Some(name) = utf8_b::decode(&name) {
-                                return Ok(Mailbox::new(Some(name), addr));
-                            }
-                        } else {
-                            return Ok(Mailbox::new(None, addr));
-                        }
-                        Err(())
-                    })
-            }).collect()
-        {
+        if let Ok(mbs) = src.parse() {
             return Ok(mbs);
         }
     }
     Err(HyperError::Header)
 }
 
-fn fmt_mailboxes(m: &[Mailbox], f: &mut HeaderFormatter) -> FmtResult {
-    f.fmt_line(&m.iter().fold(String::new(), |s, m| {
-        let m = m.recode_name(utf8_b::encode);
-        if s.is_empty() {
-            format!("{}", m)
-        } else {
-            format!("{}, {}", s, m)
-        }
-    }))
+fn format_mailboxes<'a>(mbs: Iter<'a, Mailbox>, f: &mut HeaderFormatter) -> FmtResult {
+    f.fmt_line(&Mailboxes::from(
+        mbs.map(|mb| mb.recode_name(utf8_b::encode))
+            .collect::<Vec<_>>(),
+    ))
 }
 
 #[cfg(test)]
 mod test {
-    use super::{From, Mailbox};
+    use super::{From, Mailbox, Mailboxes};
     use hyperx::Headers;
 
     #[test]
     fn format_single_without_name() {
-        let from = vec!["kayo@example.com".parse().unwrap()];
+        let from = Mailboxes::new().add("kayo@example.com".parse().unwrap());
 
         let mut headers = Headers::new();
         headers.set(From(from));
@@ -140,7 +173,7 @@ mod test {
 
     #[test]
     fn format_single_with_name() {
-        let from = vec!["K. <kayo@example.com>".parse().unwrap()];
+        let from = Mailboxes::new().add("K. <kayo@example.com>".parse().unwrap());
 
         let mut headers = Headers::new();
         headers.set(From(from));
@@ -150,10 +183,9 @@ mod test {
 
     #[test]
     fn format_multi_without_name() {
-        let from = vec![
-            "kayo@example.com".parse().unwrap(),
-            "pony@domain.tld".parse().unwrap(),
-        ];
+        let from = Mailboxes::new()
+            .add("kayo@example.com".parse().unwrap())
+            .add("pony@domain.tld".parse().unwrap());
 
         let mut headers = Headers::new();
         headers.set(From(from));
@@ -172,7 +204,7 @@ mod test {
         ];
 
         let mut headers = Headers::new();
-        headers.set(From(from));
+        headers.set(From(from.into()));
 
         assert_eq!(
             format!("{}", headers),
@@ -185,7 +217,7 @@ mod test {
         let from = vec!["Кайо <kayo@example.com>".parse().unwrap()];
 
         let mut headers = Headers::new();
-        headers.set(From(from));
+        headers.set(From(from.into()));
 
         assert_eq!(
             format!("{}", headers),
@@ -195,7 +227,7 @@ mod test {
 
     #[test]
     fn parse_single_without_name() {
-        let from: Vec<Mailbox> = vec!["kayo@example.com".parse().unwrap()];
+        let from = vec!["kayo@example.com".parse().unwrap()].into();
 
         let mut headers = Headers::new();
         headers.set_raw("From", "kayo@example.com");
@@ -205,7 +237,7 @@ mod test {
 
     #[test]
     fn parse_single_with_name() {
-        let from: Vec<Mailbox> = vec!["K. <kayo@example.com>".parse().unwrap()];
+        let from = vec!["K. <kayo@example.com>".parse().unwrap()].into();
 
         let mut headers = Headers::new();
         headers.set_raw("From", "K. <kayo@example.com>");
@@ -223,7 +255,7 @@ mod test {
         let mut headers = Headers::new();
         headers.set_raw("From", "kayo@example.com, pony@domain.tld");
 
-        assert_eq!(headers.get::<From>(), Some(&From(from)));
+        assert_eq!(headers.get::<From>(), Some(&From(from.into())));
     }
 
     #[test]
@@ -236,7 +268,7 @@ mod test {
         let mut headers = Headers::new();
         headers.set_raw("From", "K. <kayo@example.com>, Pony P. <pony@domain.tld>");
 
-        assert_eq!(headers.get::<From>(), Some(&From(from)));
+        assert_eq!(headers.get::<From>(), Some(&From(from.into())));
     }
 
     #[test]
@@ -246,6 +278,6 @@ mod test {
         let mut headers = Headers::new();
         headers.set_raw("From", "=?utf-8?b?0JrQsNC50L4=?= <kayo@example.com>");
 
-        assert_eq!(headers.get::<From>(), Some(&From(from)));
+        assert_eq!(headers.get::<From>(), Some(&From(from.into())));
     }
 }

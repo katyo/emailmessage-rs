@@ -1,9 +1,11 @@
 pub use emailaddress::{AddrError, EmailAddress as Address};
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::slice::Iter;
 use std::str::FromStr;
+use utf8_b;
 
 /// Email address with addressee name
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Mailbox {
     pub name: Option<String>,
     pub addr: Address,
@@ -60,6 +62,113 @@ impl FromStr for Mailbox {
                 Ok(Mailbox::new(None, addr))
             }
         }
+    }
+}
+
+/// List or email mailboxes
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mailboxes(Vec<Mailbox>);
+
+impl Mailboxes {
+    /// Create mailboxes list
+    pub fn new() -> Self {
+        Mailboxes(Vec::new())
+    }
+
+    /// Add mailbox to a list
+    pub fn add(mut self, mbox: Mailbox) -> Self {
+        self.0.push(mbox);
+        self
+    }
+
+    /// Extract first mailbox
+    pub fn into_single(self) -> Option<Mailbox> {
+        self.into()
+    }
+
+    /// Iterate over mailboxes
+    pub fn iter<'a>(&'a self) -> Iter<'a, Mailbox> {
+        self.0.iter()
+    }
+}
+
+impl From<Mailbox> for Mailboxes {
+    fn from(single: Mailbox) -> Self {
+        Mailboxes(vec![single])
+    }
+}
+
+impl Into<Option<Mailbox>> for Mailboxes {
+    fn into(self) -> Option<Mailbox> {
+        self.into_iter().next()
+    }
+}
+
+impl From<Vec<Mailbox>> for Mailboxes {
+    fn from(list: Vec<Mailbox>) -> Self {
+        Mailboxes(list)
+    }
+}
+
+impl Into<Vec<Mailbox>> for Mailboxes {
+    fn into(self) -> Vec<Mailbox> {
+        self.0
+    }
+}
+
+impl IntoIterator for Mailboxes {
+    type Item = Mailbox;
+    type IntoIter = ::std::vec::IntoIter<Mailbox>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl Extend<Mailbox> for Mailboxes {
+    fn extend<T: IntoIterator<Item = Mailbox>>(&mut self, iter: T) {
+        for elem in iter {
+            self.0.push(elem);
+        }
+    }
+}
+
+impl Display for Mailboxes {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let mut iter = self.iter();
+
+        if let Some(mbox) = iter.next() {
+            mbox.fmt(f)?;
+
+            while let Some(mbox) = iter.next() {
+                f.write_str(", ")?;
+                mbox.fmt(f)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl FromStr for Mailboxes {
+    type Err = String;
+
+    fn from_str(src: &str) -> Result<Self, Self::Err> {
+        src.split(',')
+            .map(|m| {
+                m.trim().parse().and_then(|Mailbox { name, addr }| {
+                    if let Some(name) = name {
+                        if let Some(name) = utf8_b::decode(&name) {
+                            Ok(Mailbox::new(Some(name), addr))
+                        } else {
+                            Err("Unable to decode utf8b".into())
+                        }
+                    } else {
+                        Ok(Mailbox::new(None, addr))
+                    }
+                })
+            }).collect::<Result<Vec<_>, _>>()
+            .map(Mailboxes)
     }
 }
 
