@@ -4,9 +4,11 @@ use futures::{Async, Poll, Stream};
 use header::ContentTransferEncoding;
 use hyper::body::Payload;
 use quoted_printable;
+use std::cmp::min;
 use std::error::Error;
 use std::fmt;
 
+/// Content encoding error
 #[derive(Debug, Clone)]
 pub enum EncoderError<E> {
     Source(E),
@@ -27,8 +29,31 @@ where
     }
 }
 
+/// Encoder trait
 pub trait EncoderCodec: Send {
-    fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()>;
+    /// Encode chunk of data
+    fn encode_chunk(&mut self, input: Bytes) -> Result<Bytes, ()>;
+
+    /// Encode end of stream
+    ///
+    /// This proposed to use for stateful encoders like *base64*.
+    fn finish_chunk(&mut self) -> Result<Bytes, ()> {
+        Ok(Bytes::new())
+    }
+
+    /// Encode all data
+    fn encode_all(&mut self, source: Bytes) -> Result<Bytes, ()> {
+        let chunk = self.encode_chunk(source)?;
+        let end = self.finish_chunk()?;
+
+        Ok(if end.is_empty() {
+            chunk
+        } else {
+            let mut chunk = chunk.try_mut().unwrap();
+            chunk.put(end);
+            chunk.freeze()
+        })
+    }
 }
 
 /// 7bit codec
@@ -75,22 +100,72 @@ impl EncoderCodec for QuotedPrintableCodec {
 ///
 struct Base64Codec {
     line_wrapper: EightBitCodec,
+    last_padding: Bytes,
 }
 
 impl Base64Codec {
     pub fn new() -> Self {
         Base64Codec {
             line_wrapper: EightBitCodec::new().with_limit(78 - 2),
+            last_padding: Bytes::new(),
         }
     }
 }
 
 impl EncoderCodec for Base64Codec {
     fn encode_chunk(&mut self, chunk: Bytes) -> Result<Bytes, ()> {
-        let mut out = BytesMut::with_capacity(chunk.len() * 4 / 3 + 4);
+        let in_len = self.last_padding.len() + chunk.len();
+        let out_len = in_len * 4 / 3;
+
+        let mut out = BytesMut::with_capacity(out_len);
+        let chunk = chunk.into_buf();
+
+        let chunk = if self.last_padding.is_empty() {
+            chunk
+        } else {
+            let mut src = BytesMut::with_capacity(3);
+            let len = min(chunk.remaining(), 3 - self.last_padding.len());
+
+            src.put(&self.last_padding);
+            let mut addon = chunk.take(len);
+            src.put(&mut addon);
+
+            // encode beginning
+            unsafe {
+                let len = base64::encode_config_slice(&src, base64::STANDARD, out.bytes_mut());
+                out.advance_mut(len);
+            }
+
+            addon.into_inner()
+        };
+
+        let len = chunk.remaining() - (chunk.remaining() % 3);
+        let chunk = if len > 0 {
+            let mut src = chunk.take(len);
+            // encode chunk
+            unsafe {
+                let len =
+                    base64::encode_config_slice(src.bytes(), base64::STANDARD, out.bytes_mut());
+                out.advance_mut(len);
+            }
+            src.advance(len);
+            src.into_inner()
+        } else {
+            chunk
+        };
+
+        // update last padding
+        self.last_padding = chunk.bytes().into();
+
+        self.line_wrapper.encode_chunk(out.freeze())
+    }
+
+    fn finish_chunk(&mut self) -> Result<Bytes, ()> {
+        let mut out = BytesMut::with_capacity(4);
 
         unsafe {
-            let len = base64::encode_config_slice(&chunk, base64::STANDARD, out.bytes_mut());
+            let len =
+                base64::encode_config_slice(&self.last_padding, base64::STANDARD, out.bytes_mut());
             out.advance_mut(len);
         }
 
@@ -156,11 +231,11 @@ impl EncoderCodec for EightBitCodec {
 
 /// Binary codec
 ///
-struct BinaryCodec();
+struct BinaryCodec;
 
 impl BinaryCodec {
     pub fn new() -> Self {
-        BinaryCodec()
+        BinaryCodec
     }
 }
 
@@ -170,10 +245,15 @@ impl EncoderCodec for BinaryCodec {
     }
 }
 
-pub struct EncoderChunk();
+/// Data encoder stream
+///
+pub struct EncoderStream<S> {
+    source: S,
+    encoder: Box<EncoderCodec>,
+}
 
-impl EncoderChunk {
-    pub fn get(encoding: Option<&ContentTransferEncoding>) -> Box<EncoderCodec> {
+impl EncoderStream<()> {
+    pub fn codec(encoding: Option<&ContentTransferEncoding>) -> Box<EncoderCodec> {
         use self::ContentTransferEncoding::*;
         if let Some(encoding) = encoding {
             match encoding {
@@ -189,23 +269,16 @@ impl EncoderChunk {
     }
 }
 
-/// Generic data encoder
-///
-pub struct EncoderStream<S> {
-    source: S,
-    encoder: Box<EncoderCodec>,
-}
-
 impl<S> EncoderStream<S> {
     pub fn new(source: S, encoder: Box<EncoderCodec>) -> Self {
-        EncoderStream { source, encoder }
+        Self { source, encoder }
     }
 
     pub fn wrap(encoding: Option<&ContentTransferEncoding>, source: S) -> EncoderStream<S>
     where
         S: Payload,
     {
-        EncoderStream::new(source, EncoderChunk::get(encoding))
+        Self::new(source, EncoderStream::codec(encoding))
     }
 }
 
@@ -279,30 +352,46 @@ mod test {
         let mut c = Base64Codec::new();
 
         assert_eq!(
-            c.encode_chunk("Привет, мир!".as_bytes().into())
+            c.encode_all("Привет, мир!".as_bytes().into())
                 .map(|s| from_utf8(&s).map(|s| String::from(s))),
             Ok(Ok("0J/RgNC40LLQtdGCLCDQvNC40YAh".into()))
         );
 
         assert_eq!(
-            c.encode_chunk(
-                "Текст письма в уникоде подлиннее"
+            c.encode_all(
+                "Текст письма в уникоде подлиннее."
                     .as_bytes()
                     .into()
             ).map(|s| from_utf8(&s).map(|s| String::from(s))),
             Ok(Ok(concat!(
                 "0KLQtdC60YHRgiDQv9C40YHRjNC80LAg0LIg0YPQvdC40LrQ\r\n",
-                "vtC00LUg0L/QvtC00LvQuNC90L3QtdC1"
+                "vtC00LUg0L/QvtC00LvQuNC90L3QtdC1Lg=="
             ).into()))
         );
     }
 
     #[test]
-    fn base64_encode_long() {
+    fn base64_encode_all() {
         let mut c = Base64Codec::new();
 
         assert_eq!(
-            c.encode_chunk(
+            c.encode_all(
+                "Ну прямо супер-длинный текст письма в уникоде, который уж точно ну никак не поместиться в 78 байт, как ни крути, я гарантирую."
+                    .as_bytes()
+                    .into()
+            ).map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok(
+                concat!("0J3RgyDQv9GA0Y/QvNC+INGB0YPQv9C10YAt0LTQu9C40L3QvdGL0Lkg0YLQtdC60YHRgiDQv9C4\r\n",
+                        "0YHRjNC80LAg0LIg0YPQvdC40LrQvtC00LUsINC60L7RgtC+0YDRi9C5INGD0LYg0YLQvtGH0L3Q\r\n",
+                        "viDQvdGDINC90LjQutCw0Log0L3QtSDQv9C+0LzQtdGB0YLQuNGC0YzRgdGPINCyIDc4INCx0LDQ\r\n",
+                        "udGCLCDQutCw0Log0L3QuCDQutGA0YPRgtC4LCDRjyDQs9Cw0YDQsNC90YLQuNGA0YPRji4=").into()
+            ))
+        );
+
+        let mut c = Base64Codec::new();
+
+        assert_eq!(
+            c.encode_all(
                 "Ну прямо супер-длинный текст письма в уникоде, который уж точно ну никак не поместиться в 78 байт, как ни крути, я гарантирую это."
                     .as_bytes()
                     .into()
@@ -314,6 +403,65 @@ mod test {
                         "udGCLCDQutCw0Log0L3QuCDQutGA0YPRgtC4LCDRjyDQs9Cw0YDQsNC90YLQuNGA0YPRjiDRjdGC\r\n",
                         "0L4u").into()
             ))
+        );
+    }
+
+    #[test]
+    fn base64_encode_chunked() {
+        let mut c = Base64Codec::new();
+
+        assert_eq!(
+            c.encode_chunk("Chunk.".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Q2h1bmsu".into()))
+        );
+
+        assert_eq!(
+            c.finish_chunk()
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("".into()))
+        );
+
+        let mut c = Base64Codec::new();
+
+        assert_eq!(
+            c.encode_chunk("Chunk".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Q2h1".into()))
+        );
+
+        assert_eq!(
+            c.finish_chunk()
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("bms=".into()))
+        );
+
+        let mut c = Base64Codec::new();
+
+        assert_eq!(
+            c.encode_chunk("Chun".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Q2h1".into()))
+        );
+
+        assert_eq!(
+            c.finish_chunk()
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("bg==".into()))
+        );
+
+        let mut c = Base64Codec::new();
+
+        assert_eq!(
+            c.encode_chunk("Chu".as_bytes().into())
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("Q2h1".into()))
+        );
+
+        assert_eq!(
+            c.finish_chunk()
+                .map(|s| from_utf8(&s).map(|s| String::from(s))),
+            Ok(Ok("".into()))
         );
     }
 

@@ -1,3 +1,9 @@
+/*!
+
+## Headers widely used in email messages
+
+*/
+
 mod content;
 mod mailbox;
 mod special;

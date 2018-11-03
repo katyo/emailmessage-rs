@@ -8,6 +8,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::mem::replace;
 use std::time::SystemTime;
 
+/// A builder for messages
 #[derive(Debug, Clone)]
 pub struct MessageBuilder {
     headers: Headers,
@@ -148,6 +149,7 @@ impl MessageBuilder {
     }
 }
 
+/// Email message which can be formatted or streamed
 #[derive(Clone, Debug)]
 pub struct Message<B = Body> {
     headers: Headers,

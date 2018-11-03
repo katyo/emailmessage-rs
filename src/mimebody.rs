@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes, BytesMut};
-use encoder::{EncoderChunk, EncoderError, EncoderStream};
+use encoder::{EncoderError, EncoderStream};
 use futures::{Async, Poll, Stream};
 use header::{ContentTransferEncoding, ContentType, Header, Headers};
 use hyper::body::{Chunk, Payload};
@@ -273,10 +273,8 @@ where
         "\r\n".fmt(f)?;
 
         let body = self.body.as_ref().as_bytes().into();
-        let mut encoder = EncoderChunk::get(self.encoding());
-        let result = encoder
-            .encode_chunk(body)
-            .map_err(|_| FmtError::default())?;
+        let mut encoder = EncoderStream::codec(self.encoding());
+        let result = encoder.encode_all(body).map_err(|_| FmtError::default())?;
         let body = from_utf8(&result).map_err(|_| FmtError::default())?;
 
         body.fmt(f)?;
