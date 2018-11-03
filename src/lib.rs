@@ -6,8 +6,9 @@ This project aims to provide a proper strongly typed way to build emails.
 
 ## Features
 
-* Typed headers using [`hyperx::Header`]
-* Support for MIME 1.0 multipart contents
+* Typed headers using `hyperx::Header`
+* Support for headers with unicode values
+* Support for **MIME 1.0** multipart contents
 * Streaming messages to save memory usage
 
 ## Usage
