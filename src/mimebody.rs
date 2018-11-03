@@ -37,6 +37,7 @@ where
 }
 
 impl<B> Part<B> {
+    /// Converts part into stream
     pub fn into_stream(self) -> PartStream<B>
     where
         B: Payload,
@@ -99,24 +100,21 @@ pub struct SinglePartBuilder {
 }
 
 impl SinglePartBuilder {
-    /// Creates a default SinglePartBuilder
+    /// Creates a default singlepart builder
     pub fn new() -> Self {
         Self {
             headers: Headers::new(),
         }
     }
 
-    /// Set a header and move the Part
-    ///
+    /// Set the header to singlepart
     #[inline]
     pub fn header<H: Header>(mut self, header: H) -> Self {
         self.headers.set(header);
         self
     }
 
-    /// Set the body and move the Part
-    ///
-    /// Useful for the "builder-style" pattern.
+    /// Build singlepart using body
     #[inline]
     pub fn body<T>(self, body: T) -> SinglePart<T> {
         SinglePart {
@@ -154,33 +152,33 @@ pub struct SinglePart<B = Body> {
 }
 
 impl SinglePart<()> {
-    /// Creates a default SinglePartBuilder
+    /// Creates a default builder for singlepart
     pub fn builder() -> SinglePartBuilder {
         SinglePartBuilder::new()
     }
 
-    /// Creates a SinglePart with 7bit encoding
+    /// Creates a singlepart builder with 7bit encoding
     ///
     /// Shortcut for `SinglePart::builder().header(ContentTransferEncoding::SevenBit)`.
     pub fn seven_bit() -> SinglePartBuilder {
         Self::builder().header(ContentTransferEncoding::SevenBit)
     }
 
-    /// Creates a SinglePart with quoted-printable encoding
+    /// Creates a singlepart builder with quoted-printable encoding
     ///
     /// Shortcut for `SinglePart::builder().header(ContentTransferEncoding::QuotedPrintable)`.
     pub fn quoted_printable() -> SinglePartBuilder {
         Self::builder().header(ContentTransferEncoding::QuotedPrintable)
     }
 
-    /// Creates a SinglePart with base64 encoding
+    /// Creates a singlepart builder with base64 encoding
     ///
     /// Shortcut for `SinglePart::builder().header(ContentTransferEncoding::Base64)`.
     pub fn base64() -> SinglePartBuilder {
         Self::builder().header(ContentTransferEncoding::Base64)
     }
 
-    /// Creates a SinglePart with 8-bit encoding
+    /// Creates a singlepart builder with 8-bit encoding
     ///
     /// Shortcut for `SinglePart::builder().header(ContentTransferEncoding::EightBit)`.
     #[inline]
@@ -188,7 +186,7 @@ impl SinglePart<()> {
         Self::builder().header(ContentTransferEncoding::EightBit)
     }
 
-    /// Creates a SinglePart with binary encoding
+    /// Creates a singlepart builder with binary encoding
     ///
     /// Shortcut for `SinglePart::builder().header(ContentTransferEncoding::Binary)`.
     #[inline]
@@ -204,7 +202,7 @@ impl<B> SinglePart<B> {
         self.headers.get()
     }
 
-    /// Get the headers from the Part
+    /// Get the headers from singlepart
     #[inline]
     pub fn headers(&self) -> &Headers {
         &self.headers
@@ -216,46 +214,13 @@ impl<B> SinglePart<B> {
         &mut self.headers
     }
 
-    /// Set a header and move the Part
-    ///
-    /// Useful for the "builder-style" pattern.
-    #[inline]
-    pub fn with_header<H: Header>(mut self, header: H) -> Self {
-        self.headers.set(header);
-        self
-    }
-
-    /// Set the headers and move the Part
-    ///
-    /// Useful for the "builder-style" pattern.
-    #[inline]
-    pub fn with_headers(mut self, headers: Headers) -> Self {
-        self.headers = headers;
-        self
-    }
-
-    /// Set the body
-    #[inline]
-    pub fn set_body<T: Into<B>>(&mut self, body: T) {
-        self.body = body.into();
-    }
-
-    /// Set the body and move the Part
-    ///
-    /// Useful for the "builder-style" pattern.
-    #[inline]
-    pub fn with_body<T: Into<B>>(mut self, body: T) -> Self {
-        self.set_body(body);
-        self
-    }
-
-    /// Read the body
+    /// Read the body from singlepart
     #[inline]
     pub fn body_ref(&self) -> &B {
         &self.body
     }
 
-    /// Streaming single part
+    /// Converts singlepart into stream
     pub fn into_stream(self) -> SinglePartStream<B>
     where
         B: Payload,
@@ -438,7 +403,7 @@ impl MultiPartBuilder {
         self.header(ContentType(mime))
     }
 
-    /// Creates MultiPart
+    /// Creates multipart without parts
     #[inline]
     pub fn build<B>(self) -> MultiPart<B> {
         MultiPart {
@@ -447,19 +412,19 @@ impl MultiPartBuilder {
         }
     }
 
-    /// Creates MultiPart using part
+    /// Creates multipart using part
     #[inline]
     pub fn part<B>(self, part: Part<B>) -> MultiPart<B> {
         self.build().part(part)
     }
 
-    /// Creates MultiPart using singlepart
+    /// Creates multipart using singlepart
     #[inline]
     pub fn singlepart<B>(self, part: SinglePart<B>) -> MultiPart<B> {
         self.build().singlepart(part)
     }
 
-    /// Creates MultiPart using multipart
+    /// Creates multipart using multipart
     #[inline]
     pub fn multipart<B>(self, part: MultiPart<B>) -> MultiPart<B> {
         self.build().multipart(part)
@@ -476,77 +441,71 @@ impl Default for MultiPartBuilder {
 ///
 pub struct MultiPart<B = Body> {
     headers: Headers,
-    parts: Vec<Part<B>>,
+    parts: Parts<B>,
 }
 
 impl MultiPart<()> {
-    /// Creates MultiPart builder
+    /// Creates multipart builder
     #[inline]
     pub fn builder() -> MultiPartBuilder {
         MultiPartBuilder::new()
     }
 
-    /// Creates MultiPart builder of specified kind
-    #[inline]
-    pub fn builder_kind(kind: MultiPartKind) -> MultiPartBuilder {
-        MultiPartBuilder::new().kind(kind)
-    }
-
-    /// Creates MultiPart mixed
+    /// Creates mixed multipart builder
     ///
-    /// Shortcut for `MultiPart::new(MultiPartKind::Mixed)`
+    /// Shortcut for `MultiPart::builder().kind(MultiPartKind::Mixed)`
     #[inline]
     pub fn mixed() -> MultiPartBuilder {
-        MultiPart::builder_kind(MultiPartKind::Mixed)
+        MultiPart::builder().kind(MultiPartKind::Mixed)
     }
 
-    /// Creates MultiPart alternative
+    /// Creates alternative multipart builder
     ///
-    /// Shortcut for `MultiPart::new(MultiPartKind::Alternative)`
+    /// Shortcut for `MultiPart::builder().kind(MultiPartKind::Alternative)`
     #[inline]
     pub fn alternative() -> MultiPartBuilder {
-        MultiPart::builder_kind(MultiPartKind::Alternative)
+        MultiPart::builder().kind(MultiPartKind::Alternative)
     }
 
-    /// Creates MultiPart alternative
+    /// Creates related multipart builder
     ///
-    /// Shortcut for `MultiPart::new(MultiPartKind::Related)`
+    /// Shortcut for `MultiPart::builder().kind(MultiPartKind::Related)`
     #[inline]
     pub fn related() -> MultiPartBuilder {
-        MultiPart::builder_kind(MultiPartKind::Related)
+        MultiPart::builder().kind(MultiPartKind::Related)
     }
 }
 
 impl<B> MultiPart<B> {
-    /// Add a sub-part and move the MultiPart
+    /// Add part to multipart
     #[inline]
     pub fn part(mut self, part: Part<B>) -> Self {
         self.parts.push(part);
         self
     }
 
-    /// Add a single sub-part and move the MultiPart
+    /// Add single part to multipart
     #[inline]
     pub fn singlepart(mut self, part: SinglePart<B>) -> Self {
         self.parts.push(Part::Single(part));
         self
     }
 
-    /// Add a multi sub-part and move the MultiPart
+    /// Add multi part to multipart
     #[inline]
     pub fn multipart(mut self, part: MultiPart<B>) -> Self {
         self.parts.push(Part::Multi(part));
         self
     }
 
-    /// Get the boundary of MultiPart contents
+    /// Get the boundary of multipart contents
     #[inline]
     pub fn boundary(&self) -> String {
         let content_type = &self.headers.get::<ContentType>().unwrap().0;
         content_type.get_param("boundary").unwrap().as_str().into()
     }
 
-    /// Get the headers from the MultiPart
+    /// Get the headers from the multipart
     #[inline]
     pub fn headers(&self) -> &Headers {
         &self.headers
@@ -558,19 +517,19 @@ impl<B> MultiPart<B> {
         &mut self.headers
     }
 
-    /// Get the sub-parts from the MultiPart.
+    /// Get the parts from the multipart
     #[inline]
-    pub fn parts(&self) -> &Vec<Part<B>> {
+    pub fn parts(&self) -> &Parts<B> {
         &self.parts
     }
 
-    /// Get a mutable reference to the sub-parts
+    /// Get a mutable reference to the parts
     #[inline]
     pub fn parts_mut(&mut self) -> &mut Parts<B> {
         &mut self.parts
     }
 
-    /// Streaming multi part
+    /// Converts multipart into stream
     pub fn into_stream(self) -> MultiPartStream<B>
     where
         B: Payload,
@@ -602,7 +561,7 @@ where
     }
 }
 
-/// Stream for multi part
+/// Stream for multipart
 ///
 pub struct MultiPartStream<B> {
     boundary: Bytes,
