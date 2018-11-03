@@ -1,131 +1,250 @@
-use super::{BinaryChunk, BinaryStream, MailBody};
+use super::{Body, Mailbox};
 use bytes::Bytes;
-use futures::{stream, Stream};
-use header::{Date, EmailDate, Header, Headers};
+use encoder::{EncoderError, EncoderStream};
+use futures::{Async, Poll, Stream};
+use header::{self, EmailDate, Header, Headers, MailboxesHeader};
+use hyper::body::Payload;
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::mem::replace;
 use std::time::SystemTime;
 
-pub type MessageStream<E> = Box<BinaryStream<E>>;
-
-#[derive(Clone, Debug)]
-pub struct Message<B = MailBody> {
+#[derive(Debug, Clone)]
+pub struct MessageBuilder {
     headers: Headers,
-    body: Option<B>,
 }
 
-impl<B> Message<B> {
-    /// Constructs a default message
+impl MessageBuilder {
+    /// Creates a new default message builder
     #[inline]
     pub fn new() -> Self {
-        Message {
-            headers: Headers::default(),
-            body: None,
+        Self {
+            headers: Headers::new(),
         }
     }
 
-    /// Constructs just now created message
-    ///
-    /// Shortcut for Self::new().with_date(None)
+    /// Set custom header to message
     #[inline]
-    pub fn just_now() -> Self {
-        Self::new().with_date(None)
+    pub fn header<H: Header>(mut self, header: H) -> Self {
+        self.headers.set(header);
+        self
     }
 
-    /// Get the headers from the Message.
+    /// Add mailbox to header
+    pub fn mailbox<H: Header + MailboxesHeader>(mut self, header: H) -> Self {
+        if self.headers.has::<H>() {
+            self.headers.get_mut::<H>().unwrap().join_mailboxes(header);
+            self
+        } else {
+            self.header(header)
+        }
+    }
+
+    /// Add `Date:` header to message
+    ///
+    /// Shortcut for `self.header(header::Date(date))`.
+    #[inline]
+    pub fn date(self, date: EmailDate) -> Self {
+        self.header(header::Date(date))
+    }
+
+    /// Set `Date:` header using current date/time
+    ///
+    /// Shortcut for `self.date(SystemTime::now())`.
+    #[inline]
+    pub fn date_now(self) -> Self {
+        self.date(SystemTime::now().into())
+    }
+
+    /// Set `Subject:` header to message
+    ///
+    /// Shortcut for `self.header(header::Subject(subject.into()))`.
+    #[inline]
+    pub fn subject<S: Into<String>>(self, subject: S) -> Self {
+        self.header(header::Subject(subject.into()))
+    }
+
+    /// Set `Mime-Version:` header to 1.0
+    ///
+    /// Shortcut for `self.header(header::MIME_VERSION_1_0)`.
+    #[inline]
+    pub fn mime_1_0(self) -> Self {
+        self.header(header::MIME_VERSION_1_0)
+    }
+
+    /// Set `Sender:` header
+    ///
+    /// Shortcut for `self.header(header::Sender(mbox))`.
+    #[inline]
+    pub fn sender(self, mbox: Mailbox) -> Self {
+        self.header(header::Sender(mbox))
+    }
+
+    /// Set or add mailbox to `From:` header
+    ///
+    /// Shortcut for `self.mailbox(header::From(mbox))`.
+    #[inline]
+    pub fn from(self, mbox: Mailbox) -> Self {
+        self.mailbox(header::From(vec![mbox]))
+    }
+
+    /// Set or add mailbox to `ReplyTo:` header
+    ///
+    /// Shortcut for `self.mailbox(header::ReplyTo(mbox))`.
+    #[inline]
+    pub fn reply_to(self, mbox: Mailbox) -> Self {
+        self.mailbox(header::ReplyTo(vec![mbox]))
+    }
+
+    /// Set or add mailbox to `To:` header
+    ///
+    /// Shortcut for `self.mailbox(header::To(mbox))`.
+    #[inline]
+    pub fn to(self, mbox: Mailbox) -> Self {
+        self.mailbox(header::To(vec![mbox]))
+    }
+
+    /// Set or add mailbox to `Cc:` header
+    ///
+    /// Shortcut for `self.mailbox(header::Cc(mbox))`.
+    #[inline]
+    pub fn cc(self, mbox: Mailbox) -> Self {
+        self.mailbox(header::Cc(vec![mbox]))
+    }
+
+    /// Set or add mailbox to `Bcc:` header
+    ///
+    /// Shortcut for `self.mailbox(header::Bcc(mbox))`.
+    #[inline]
+    pub fn bcc(self, mbox: Mailbox) -> Self {
+        self.mailbox(header::Bcc(vec![mbox]))
+    }
+
+    /// Add body and construct [`Message`]
+    #[inline]
+    pub fn body<T>(self, body: T) -> Message<T> {
+        Message {
+            headers: self.headers,
+            body,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Message<B = Body> {
+    headers: Headers,
+    body: B,
+}
+
+impl Message<()> {
+    /// Create a new message builder without headers
+    #[inline]
+    pub fn builder() -> MessageBuilder {
+        MessageBuilder::new()
+    }
+
+    /// Constructs a default message builder with date header which filled using current local time
+    #[inline]
+    pub fn create() -> MessageBuilder {
+        Self::builder().date_now()
+    }
+}
+
+impl<B> Message<B> {
+    /// Get the headers from the Message
     #[inline]
     pub fn headers(&self) -> &Headers {
         &self.headers
     }
 
-    /// Get a mutable reference to the headers.
+    /// Get a mutable reference to the headers
     #[inline]
     pub fn headers_mut(&mut self) -> &mut Headers {
         &mut self.headers
     }
 
-    /// Set a header and move the Message.
-    ///
-    /// Useful for the "builder-style" pattern.
-    #[inline]
-    pub fn with_header<H: Header>(mut self, header: H) -> Self {
-        self.headers.set(header);
-        self
-    }
-
-    /// Set the headers and move the Message.
-    ///
-    /// Useful for the "builder-style" pattern.
-    #[inline]
-    pub fn with_headers(mut self, headers: Headers) -> Self {
-        self.headers = headers;
-        self
-    }
-
-    /// Set a date and move the Message.
-    ///
-    /// Useful for the "builder-style" pattern.
-    ///
-    /// `None` value means use current local time as a date.
-    #[inline]
-    pub fn with_date(self, date: Option<EmailDate>) -> Self {
-        let date: EmailDate = date.unwrap_or_else(|| SystemTime::now().into());
-
-        self.with_header(Date(date))
-    }
-
-    /// Set the body.
+    /// Set the body
     #[inline]
     pub fn set_body<T: Into<B>>(&mut self, body: T) {
-        self.body = Some(body.into());
+        self.body = body.into();
     }
 
-    /// Set the body and move the Message.
-    ///
-    /// Useful for the "builder-style" pattern.
+    /// Read the body
     #[inline]
-    pub fn with_body<T: Into<B>>(mut self, body: T) -> Self {
-        self.set_body(body);
-        self
+    pub fn body_ref(&self) -> &B {
+        &self.body
     }
 
-    /// Read the body.
-    #[inline]
-    pub fn body_ref(&self) -> Option<&B> {
-        self.body.as_ref()
-    }
-
-    pub fn into_stream<C, E>(self) -> MessageStream<E>
+    /// Converts message into stream
+    pub fn into_stream(self) -> MessageStream<B>
     where
-        B: Stream<Item = C, Error = E> + Send + 'static,
-        C: Into<BinaryChunk>,
-        E: Send + 'static,
+        B: Payload,
     {
         self.into()
     }
 }
 
-/// Convert message into boxed stream of binary chunks
-///
-impl<B, C, E> Into<MessageStream<E>> for Message<B>
-where
-    B: Stream<Item = C, Error = E> + Send + 'static,
-    C: Into<BinaryChunk>,
-    E: Send + 'static,
-{
-    fn into(self) -> MessageStream<E> {
-        let headers = stream::once(Ok(Bytes::from(self.headers.to_string())));
+/// Stream for message
+pub struct MessageStream<B> {
+    headers: Option<Headers>,
+    body: Option<EncoderStream<B>>,
+}
 
-        if let Some(body) = self.body {
-            Box::new(headers.chain(body.map(|chunk| chunk.into().as_ref().into())))
+impl<B> Stream for MessageStream<B>
+where
+    B: Payload,
+    B::Data: Into<Bytes>,
+{
+    type Item = Bytes;
+    type Error = EncoderError<B::Error>;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        if let Some(headers) = replace(&mut self.headers, None) {
+            // stream headers
+            let raw = Bytes::from(headers.to_string());
+            Ok(Async::Ready(Some(raw)))
         } else {
-            Box::new(headers)
+            // stream body
+            let res = if let Some(body) = &mut self.body {
+                body.poll()
+            } else {
+                // end of data
+                return Ok(Async::Ready(None));
+            };
+
+            if let Ok(Async::Ready(None)) = &res {
+                // end of stream
+                self.body = None;
+                Ok(Async::Ready(None))
+            } else {
+                // chunk or error
+                res
+            }
         }
     }
 }
 
-impl<B> Default for Message<B> {
+/// Convert message into boxed stream of binary chunks
+///
+impl<B> From<Message<B>> for MessageStream<B>
+where
+    B: Payload,
+{
+    fn from(Message { headers, body }: Message<B>) -> Self {
+        let body = {
+            let encoding = headers.get();
+            EncoderStream::wrap(encoding, body)
+        };
+
+        MessageStream {
+            headers: Some(headers),
+            body: Some(body),
+        }
+    }
+}
+
+impl Default for MessageBuilder {
     fn default() -> Self {
-        Message::new()
+        MessageBuilder::new()
     }
 }
 
@@ -135,9 +254,7 @@ where
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
-        if let Some(ref body) = self.body {
-            body.fmt(f)?;
-        }
+        self.body.fmt(f)?;
         Ok(())
     }
 }
@@ -146,7 +263,7 @@ where
 mod test {
     use header;
     use mailbox::Mailbox;
-    use message::{BinaryStream, Message};
+    use message::Message;
 
     use futures::{Future, Stream};
     use std::str::from_utf8;
@@ -155,7 +272,7 @@ mod test {
     fn date_header() {
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
 
-        let email: Message<String> = Message::new().with_date(Some(date)).with_body("\r\n");
+        let email = Message::builder().date(date).body("\r\n");
 
         assert_eq!(
             format!("{}", email),
@@ -167,15 +284,15 @@ mod test {
     fn email_message() {
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
 
-        let email: Message<String> = Message::new()
-            .with_date(Some(date))
-            .with_header(header::From(vec![Mailbox::new(
+        let email = Message::builder()
+            .date(date)
+            .header(header::From(vec![Mailbox::new(
                 Some("Каи".into()),
                 "kayo@example.com".parse().unwrap(),
-            )])).with_header(header::To(vec![
+            )])).header(header::To(vec![
                 "Pony O.P. <pony@domain.tld>".parse().unwrap(),
-            ])).with_header(header::Subject("яңа ел белән!".into()))
-            .with_body("\r\nHappy new year!");
+            ])).header(header::Subject("яңа ел белән!".into()))
+            .body("\r\nHappy new year!");
 
         assert_eq!(
             format!("{}", email),
@@ -194,17 +311,17 @@ mod test {
     fn message_to_stream() {
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
 
-        let email: Message = Message::new()
-            .with_date(Some(date))
-            .with_header(header::From(vec![Mailbox::new(
+        let email: Message = Message::builder()
+            .date(date)
+            .header(header::From(vec![Mailbox::new(
                 Some("Каи".into()),
                 "kayo@example.com".parse().unwrap(),
-            )])).with_header(header::To(vec![
+            )])).header(header::To(vec![
                 "Pony O.P. <pony@domain.tld>".parse().unwrap(),
-            ])).with_header(header::Subject("яңа ел белән!".into()))
-            .with_body("\r\nHappy new year!");
+            ])).header(header::Subject("яңа ел белән!".into()))
+            .body("\r\nHappy new year!".into());
 
-        let body: Box<BinaryStream<_>> = email.into();
+        let body = email.into_stream();
 
         assert_eq!(
             body.concat2()

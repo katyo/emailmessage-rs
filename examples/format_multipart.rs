@@ -1,45 +1,45 @@
 extern crate emailmessage;
 
-use emailmessage::{header, Message, SinglePart, MultiPart};
+use emailmessage::{header, Message, MultiPart, SinglePart};
 
 fn main() {
-    let m: Message<MultiPart<String>> = Message::new()
-        .with_header(header::From(vec!["NoBody <nobody@domain.tld>".parse().unwrap()]))
-        .with_header(header::ReplyTo(vec!["Yuin <yuin@domain.tld>".parse().unwrap()]))
-        .with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_header(header::MIME_VERSION_1_0)
-        .with_body(
+    let m: Message<MultiPart<&str>> = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .mime_1_0()
+        .body(
             MultiPart::mixed()
-            .with_multipart(
+            .multipart(
                 MultiPart::alternative()
-                .with_singlepart(
+                .singlepart(
                     SinglePart::quoted_printable()
-                    .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                    .with_body("Привет, мир!")
+                    .header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
+                    .body("Привет, мир!")
                 )
-                .with_multipart(
+                .multipart(
                     MultiPart::related()
-                    .with_singlepart(
+                    .singlepart(
                         SinglePart::eight_bit()
-                        .with_header(header::ContentType("text/html; charset=utf8".parse().unwrap()))
-                        .with_body("<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>")
+                        .header(header::ContentType("text/html; charset=utf8".parse().unwrap()))
+                        .body("<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>")
                     )
-                    .with_singlepart(
+                    .singlepart(
                         SinglePart::base64()
-                        .with_header(header::ContentType("image/png".parse().unwrap()))
-                        .with_header(header::ContentDisposition {
+                        .header(header::ContentType("image/png".parse().unwrap()))
+                        .header(header::ContentDisposition {
                             disposition: header::DispositionType::Inline,
                             parameters: vec![],
                         })
-                        .with_body("<smile-raw-image-data>")
+                        .body("<smile-raw-image-data>")
                     )
                 )
             )
-            .with_singlepart(
+            .singlepart(
                 SinglePart::seven_bit()
-                .with_header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
-                .with_header(header::ContentDisposition {
+                .header(header::ContentType("text/plain; charset=utf8".parse().unwrap()))
+                .header(header::ContentDisposition {
                                  disposition: header::DispositionType::Attachment,
                                  parameters: vec![
                                      header::DispositionParam::Filename(
@@ -48,9 +48,9 @@ fn main() {
                                      )
                                  ]
                              })
-                .with_body(String::from("int main() { return 0; }"))
+                .body("int main() { return 0; }")
             )
         );
-    
+
     println!("{}", m);
 }

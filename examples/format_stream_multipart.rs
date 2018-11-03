@@ -2,63 +2,62 @@ extern crate emailmessage;
 extern crate futures;
 extern crate tokio;
 
-use emailmessage::{header, EncodedBinaryStream, Message, MultiPart, SinglePart};
+use emailmessage::{header, Message, MultiPart, SinglePart};
 use futures::{Future, Stream};
 use std::str::from_utf8;
 use tokio::run;
 
 fn main() {
     let b: MultiPart = MultiPart::mixed()
-        .with_multipart(
+        .multipart(
             MultiPart::alternative()
-                .with_singlepart(
+                .singlepart(
                     SinglePart::quoted_printable()
-                        .with_header(header::ContentType(
+                        .header(header::ContentType(
                             "text/plain; charset=utf8".parse().unwrap(),
-                        )).with_body("Привет, мир!"),
-                ).with_multipart(
+                        )).body("Привет, мир!".into()),
+                ).multipart(
                     MultiPart::related()
-                        .with_singlepart(
+                        .singlepart(
                             SinglePart::eight_bit()
-                                .with_header(header::ContentType(
+                                .header(header::ContentType(
                                     "text/html; charset=utf8".parse().unwrap(),
-                                )).with_body(
-                                    "<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>",
+                                )).body(
+                                    "<p><b>Hello</b>, <i>world</i>! <img src=smile.png></p>".into(),
                                 ),
-                        ).with_singlepart(
+                        ).singlepart(
                             SinglePart::base64()
-                                .with_header(header::ContentType("image/png".parse().unwrap()))
-                                .with_header(header::ContentDisposition {
+                                .header(header::ContentType("image/png".parse().unwrap()))
+                                .header(header::ContentDisposition {
                                     disposition: header::DispositionType::Inline,
                                     parameters: vec![],
-                                }).with_body("<smile-raw-image-data>"),
+                                }).body("<smile-raw-image-data>".into()),
                         ),
                 ),
-        ).with_singlepart(
+        ).singlepart(
             SinglePart::seven_bit()
-                .with_header(header::ContentType(
+                .header(header::ContentType(
                     "text/plain; charset=utf8".parse().unwrap(),
-                )).with_header(header::ContentDisposition {
+                )).header(header::ContentDisposition {
                     disposition: header::DispositionType::Attachment,
                     parameters: vec![header::DispositionParam::Filename(
                         header::Charset::Ext("utf-8".into()),
                         None,
                         "example.c".as_bytes().into(),
                     )],
-                }).with_body(String::from("int main() { return 0; }")),
+                }).body("int main() { return 0; }".into()),
         );
 
-    let m: Message<Box<EncodedBinaryStream<_>>> = Message::new()
-        .with_header(header::From(vec![
-            "NoBody <nobody@domain.tld>".parse().unwrap(),
-        ])).with_header(header::ReplyTo(vec![
-            "Yuin <yuin@domain.tld>".parse().unwrap(),
-        ])).with_header(header::To(vec!["Hei <hei@domain.tld>".parse().unwrap()]))
-        .with_header(header::Subject("Happy new year".into()))
-        .with_header(header::MIME_VERSION_1_0)
-        .with_body(b);
+    let m = Message::builder()
+        .from("NoBody <nobody@domain.tld>".parse().unwrap())
+        .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
+        .to("Hei <hei@domain.tld>".parse().unwrap())
+        .subject("Happy new year")
+        .mime_1_0()
+        .body(b.into_stream());
 
-    let f = Into::<Box<EncodedBinaryStream<_>>>::into(m)
+    let f = m
+        .into_stream()
         .map(|chunk| {
             println!("CHUNK[[\n{}]]", from_utf8(&chunk).unwrap());
             chunk

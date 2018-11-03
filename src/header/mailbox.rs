@@ -7,6 +7,11 @@ use std::fmt::Result as FmtResult;
 use std::str::from_utf8;
 use utf8_b;
 
+/// Header which can contains multiple mailboxes
+pub trait MailboxesHeader {
+    fn join_mailboxes(&mut self, other: Self);
+}
+
 macro_rules! mailbox_header {
     ( $type_name: ident, $header_name: expr ) => {
         #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +47,12 @@ macro_rules! mailboxes_header {
         #[derive(Debug, Clone, PartialEq)]
         pub struct $type_name(pub Vec<Mailbox>);
 
+        impl MailboxesHeader for $type_name {
+            fn join_mailboxes(&mut self, other: Self) {
+                self.0.extend(other.0);
+            }
+        }
+
         impl Header for $type_name {
             fn header_name() -> &'static str {
                 $header_name
@@ -67,8 +78,8 @@ macro_rules! mailboxes_header {
     };
 }
 
-mailboxes_header!(From, "From");
 mailbox_header!(Sender, "Sender");
+mailboxes_header!(From, "From");
 mailboxes_header!(ReplyTo, "Reply-To");
 
 mailboxes_header!(To, "To");

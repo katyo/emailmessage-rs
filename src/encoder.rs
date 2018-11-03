@@ -2,10 +2,10 @@ use base64;
 use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 use futures::{Async, Poll, Stream};
 use header::ContentTransferEncoding;
+use hyper::body::Payload;
 use quoted_printable;
 use std::error::Error;
 use std::fmt;
-use BinaryStream;
 
 #[derive(Debug, Clone)]
 pub enum EncoderError<E> {
@@ -173,14 +173,18 @@ impl EncoderCodec for BinaryCodec {
 pub struct EncoderChunk();
 
 impl EncoderChunk {
-    pub fn get(encoding: &ContentTransferEncoding) -> Box<EncoderCodec> {
+    pub fn get(encoding: Option<&ContentTransferEncoding>) -> Box<EncoderCodec> {
         use self::ContentTransferEncoding::*;
-        match *encoding {
-            SevenBit => Box::new(SevenBitCodec::new()),
-            QuotedPrintable => Box::new(QuotedPrintableCodec::new()),
-            Base64 => Box::new(Base64Codec::new()),
-            EightBit => Box::new(EightBitCodec::new()),
-            Binary => Box::new(BinaryCodec::new()),
+        if let Some(encoding) = encoding {
+            match encoding {
+                SevenBit => Box::new(SevenBitCodec::new()),
+                QuotedPrintable => Box::new(QuotedPrintableCodec::new()),
+                Base64 => Box::new(Base64Codec::new()),
+                EightBit => Box::new(EightBitCodec::new()),
+                Binary => Box::new(BinaryCodec::new()),
+            }
+        } else {
+            Box::new(BinaryCodec::new())
         }
     }
 }
@@ -197,38 +201,37 @@ impl<S> EncoderStream<S> {
         EncoderStream { source, encoder }
     }
 
-    pub fn wrap<E>(encoding: &ContentTransferEncoding, source: S) -> EncoderStream<S>
+    pub fn wrap(encoding: Option<&ContentTransferEncoding>, source: S) -> EncoderStream<S>
     where
-        S: Stream<Item = Bytes, Error = E> + Send + 'static,
-        E: Send + 'static,
+        S: Payload,
     {
         EncoderStream::new(source, EncoderChunk::get(encoding))
     }
 }
 
-impl<S, E> Stream for EncoderStream<S>
+impl<S> Stream for EncoderStream<S>
 where
-    S: Stream<Item = Bytes, Error = E> + Send,
+    S: Payload,
+    S::Data: Into<Bytes>,
 {
     type Item = Bytes;
-    type Error = EncoderError<E>;
+    type Error = EncoderError<S::Error>;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match self.source.poll() {
-            Ok(Async::Ready(Some(chunk))) => if let Ok(chunk) = self.encoder.encode_chunk(chunk) {
-                Ok(Async::Ready(Some(chunk)))
-            } else {
-                Err(EncoderError::Coding)
-            },
+        match self.source.poll_data() {
+            Ok(Async::Ready(Some(chunk))) => {
+                if let Ok(chunk) = self.encoder.encode_chunk(chunk.into()) {
+                    Ok(Async::Ready(Some(chunk)))
+                } else {
+                    Err(EncoderError::Coding)
+                }
+            }
             Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(error) => Err(EncoderError::Source(error)),
         }
     }
 }
-
-/// Encoded binary stream
-pub type EncodedBinaryStream<E> = BinaryStream<EncoderError<E>>;
 
 #[cfg(test)]
 mod test {
