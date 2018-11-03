@@ -14,5 +14,5 @@ script:
     - cargo test --verbose
     - |
         if [ $TRAVIS_RUST_VERSION == "nightly" ]; then
-            cargo install clippy && cargo clippy -- -Dclippy
+            rustup component add clippy-preview && cargo clippy -- -Dclippy::all
         fi
