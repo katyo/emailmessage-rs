@@ -1,5 +1,5 @@
 use super::{Body, Mailbox};
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use encoder::{EncoderError, EncoderStream};
 use futures::{Async, Poll, Stream};
 use header::{self, EmailDate, Header, Headers, MailboxesHeader};
@@ -119,19 +119,39 @@ impl MessageBuilder {
         self.mailbox(header::Bcc(vec![mbox]))
     }
 
-    /// Add body and construct [`Message`]
+    /// Create message using body
     #[inline]
     pub fn body<T>(self, body: T) -> Message<T> {
         Message {
             headers: self.headers,
+            split: true,
             body,
         }
+    }
+
+    /// Create message by joining content
+    #[inline]
+    pub fn join<T>(self, body: T) -> Message<T> {
+        Message {
+            headers: self.headers,
+            split: false,
+            body,
+        }
+    }
+
+    /// Create message using mime body ([`MultiPart`])
+    ///
+    /// Shortcut for `self.mime_1_0().join(body)`.
+    #[inline]
+    pub fn mime_body<T>(self, body: T) -> Message<T> {
+        self.mime_1_0().join(body)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Message<B = Body> {
     headers: Headers,
+    split: bool,
     body: B,
 }
 
@@ -186,6 +206,7 @@ impl<B> Message<B> {
 /// Stream for message
 pub struct MessageStream<B> {
     headers: Option<Headers>,
+    split: bool,
     body: Option<EncoderStream<B>>,
 }
 
@@ -200,8 +221,13 @@ where
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if let Some(headers) = replace(&mut self.headers, None) {
             // stream headers
-            let raw = Bytes::from(headers.to_string());
-            Ok(Async::Ready(Some(raw)))
+            let headers = headers.to_string();
+            let mut out = BytesMut::with_capacity(headers.len() + if self.split { 2 } else { 0 });
+            out.put(&headers);
+            if self.split {
+                out.put_slice(b"\r\n");
+            }
+            Ok(Async::Ready(Some(out.freeze())))
         } else {
             // stream body
             let res = if let Some(body) = &mut self.body {
@@ -229,7 +255,13 @@ impl<B> From<Message<B>> for MessageStream<B>
 where
     B: Payload,
 {
-    fn from(Message { headers, body }: Message<B>) -> Self {
+    fn from(
+        Message {
+            headers,
+            split,
+            body,
+        }: Message<B>,
+    ) -> Self {
         let body = {
             let encoding = headers.get();
             EncoderStream::wrap(encoding, body)
@@ -237,6 +269,7 @@ where
 
         MessageStream {
             headers: Some(headers),
+            split,
             body: Some(body),
         }
     }
@@ -254,8 +287,10 @@ where
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         self.headers.fmt(f)?;
-        self.body.fmt(f)?;
-        Ok(())
+        if self.split {
+            f.write_str("\r\n")?;
+        }
+        self.body.fmt(f)
     }
 }
 
@@ -272,7 +307,7 @@ mod test {
     fn date_header() {
         let date = "Tue, 15 Nov 1994 08:12:31 GMT".parse().unwrap();
 
-        let email = Message::builder().date(date).body("\r\n");
+        let email = Message::builder().date(date).body("");
 
         assert_eq!(
             format!("{}", email),
@@ -292,7 +327,7 @@ mod test {
             )])).header(header::To(vec![
                 "Pony O.P. <pony@domain.tld>".parse().unwrap(),
             ])).header(header::Subject("яңа ел белән!".into()))
-            .body("\r\nHappy new year!");
+            .body("Happy new year!");
 
         assert_eq!(
             format!("{}", email),
@@ -319,7 +354,7 @@ mod test {
             )])).header(header::To(vec![
                 "Pony O.P. <pony@domain.tld>".parse().unwrap(),
             ])).header(header::Subject("яңа ел белән!".into()))
-            .body("\r\nHappy new year!".into());
+            .body("Happy new year!".into());
 
         let body = email.into_stream();
 

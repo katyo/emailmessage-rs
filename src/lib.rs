@@ -31,7 +31,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .body("\r\nBe happy!");
+        .body("Be happy!");
 
     println!("{}", m);
 }
@@ -70,8 +70,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .mime_1_0()
-        .body(
+        .mime_body(
             SinglePart::builder()
                 .header(header::ContentType(
                     "text/plain; charset=utf8".parse().unwrap(),
@@ -116,8 +115,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .mime_1_0()
-        .body(
+        .mime_body(
             MultiPart::mixed()
             .multipart(
                 MultiPart::alternative()
@@ -239,7 +237,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .body("\r\nBe happy!".into());
+        .body("Be happy!".into());
 
     let f = m
         .into_stream()
@@ -340,8 +338,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .mime_1_0()
-        .body(b.into_stream());
+        .mime_body(b.into_stream());
 
     let f = m
         .into_stream()

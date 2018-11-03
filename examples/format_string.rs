@@ -8,7 +8,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .body("\r\nBe happy!");
+        .body("Be happy!");
 
     println!("{}", m);
 }

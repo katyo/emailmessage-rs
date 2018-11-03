@@ -53,8 +53,7 @@ fn main() {
         .reply_to("Yuin <yuin@domain.tld>".parse().unwrap())
         .to("Hei <hei@domain.tld>".parse().unwrap())
         .subject("Happy new year")
-        .mime_1_0()
-        .body(b.into_stream());
+        .mime_body(b.into_stream());
 
     let f = m
         .into_stream()
