@@ -12,6 +12,7 @@ license = "MIT"
 
 [badges]
 travis-ci = { repository = "katyo/emailmessage-rs", branch = "master" }
+appveyor = { repository = "katyo/emailmessage-rs", branch = "master" }
 
 [dependencies]
 bytes = "^0.4"
