@@ -163,7 +163,7 @@ mod test {
 
     #[test]
     fn format_single_without_name() {
-        let from = Mailboxes::new().add("kayo@example.com".parse().unwrap());
+        let from = Mailboxes::new().with("kayo@example.com".parse().unwrap());
 
         let mut headers = Headers::new();
         headers.set(From(from));
@@ -173,7 +173,7 @@ mod test {
 
     #[test]
     fn format_single_with_name() {
-        let from = Mailboxes::new().add("K. <kayo@example.com>".parse().unwrap());
+        let from = Mailboxes::new().with("K. <kayo@example.com>".parse().unwrap());
 
         let mut headers = Headers::new();
         headers.set(From(from));
@@ -184,8 +184,8 @@ mod test {
     #[test]
     fn format_multi_without_name() {
         let from = Mailboxes::new()
-            .add("kayo@example.com".parse().unwrap())
-            .add("pony@domain.tld".parse().unwrap());
+            .with("kayo@example.com".parse().unwrap())
+            .with("pony@domain.tld".parse().unwrap());
 
         let mut headers = Headers::new();
         headers.set(From(from));

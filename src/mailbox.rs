@@ -76,7 +76,7 @@ impl Mailboxes {
     }
 
     /// Add mailbox to a list
-    pub fn add(mut self, mbox: Mailbox) -> Self {
+    pub fn with(mut self, mbox: Mailbox) -> Self {
         self.0.push(mbox);
         self
     }
@@ -87,8 +87,14 @@ impl Mailboxes {
     }
 
     /// Iterate over mailboxes
-    pub fn iter<'a>(&'a self) -> Iter<'a, Mailbox> {
+    pub fn iter(&self) -> Iter<Mailbox> {
         self.0.iter()
+    }
+}
+
+impl Default for Mailboxes {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -140,7 +146,7 @@ impl Display for Mailboxes {
         if let Some(mbox) = iter.next() {
             mbox.fmt(f)?;
 
-            while let Some(mbox) = iter.next() {
+            for mbox in iter {
                 f.write_str(", ")?;
                 mbox.fmt(f)?;
             }
