@@ -16,15 +16,19 @@ appveyor = { repository = "katyo/emailmessage-rs", branch = "master" }
 
 [dependencies]
 bytes = "^0.4"
-emailaddress = "^0.4"
 time = "^0.1"
 base64 = "^0.10"
 quoted_printable = "^0.4"
+regex = "^1"
+idna = "^0.1"
+lazy_static = "^1"
 hyperx = "^0.13"
 hyper = "^0.12"
 mime = "^0.3"
 textnonce = "^0.6"
 futures = "^0.1"
+serde = { version = "^1", optional = true }
 
 [dev-dependencies]
 tokio = "^0.1"
+serde_json = "^1"

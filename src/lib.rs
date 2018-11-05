@@ -10,6 +10,7 @@ This project aims to provide a proper strongly typed way to build emails.
 * Support for headers with unicode values
 * Support for **MIME 1.0** multipart contents
 * Streaming messages to save memory usage
+* Email `Address`, `Mailbox` and `Mailboxes` types
 
 ## Usage
 
@@ -455,12 +456,19 @@ CHUNK[[
 
 extern crate base64;
 extern crate bytes;
-extern crate emailaddress;
 extern crate futures;
 extern crate hyper;
 extern crate hyperx;
+extern crate idna;
+extern crate regex;
+#[macro_use]
+extern crate lazy_static;
 extern crate mime;
 extern crate quoted_printable;
+#[cfg(feature = "serde")]
+extern crate serde;
+#[cfg(all(feature = "serde", test))]
+extern crate serde_json;
 extern crate textnonce;
 
 #[cfg(test)]

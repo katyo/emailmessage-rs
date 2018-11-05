@@ -1,20 +1,85 @@
-pub use emailaddress::{AddrError, EmailAddress as Address};
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use super::check::{check_domain, check_user};
+use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FmtResult, Write};
 use std::slice::Iter;
 use std::str::FromStr;
 use utf8_b;
 
-/// Email address with addressee name
+/// Email address
+///
+/// This type contains email in canonical form (_user@domain.tld_).
+///
+/// **NOTE**: Enable feature "serde" to be able serialize/deserialize it using [serde](https://serde.rs/).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Address {
+    /// User part
+    pub user: String,
+
+    /// Domain part
+    pub domain: String,
+}
+
+impl Address {
+    /// Create email address from parts
+    #[inline]
+    pub fn new<U: Into<String>, D: Into<String>>(user: U, domain: D) -> Self {
+        Address {
+            user: user.into(),
+            domain: domain.into(),
+        }
+    }
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.write_str(&self.user)?;
+        f.write_char('@')?;
+        f.write_str(&self.domain)
+    }
+}
+
+impl FromStr for Address {
+    type Err = MailboxError;
+
+    fn from_str(val: &str) -> Result<Self, MailboxError> {
+        use self::MailboxError::*;
+
+        if val.is_empty() || !val.contains('@') {
+            return Err(MissingParts);
+        }
+
+        let parts: Vec<&str> = val.rsplitn(2, '@').collect();
+        let user = parts[1];
+        let domain = parts[0];
+
+        check_user(user)
+            .and_then(|_| check_domain(domain))
+            .map(|_| Address {
+                user: user.into(),
+                domain: domain.into(),
+            })
+    }
+}
+
+/// Email address with optional addressee name
+///
+/// This type contains email address and the sender/recipient name (_Some Name \<user@domain.tld\>_ or _withoutname@domain.tld_).
+///
+/// **NOTE**: Enable feature "serde" to be able serialize/deserialize it using [serde](https://serde.rs/).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mailbox {
+    /// User name part
     pub name: Option<String>,
-    pub addr: Address,
+
+    /// Email address part
+    pub email: Address,
 }
 
 impl Mailbox {
     /// Create new mailbox using email address and addressee name
-    pub fn new(name: Option<String>, addr: Address) -> Self {
-        Mailbox { name, addr }
+    #[inline]
+    pub fn new(name: Option<String>, email: Address) -> Self {
+        Mailbox { name, email }
     }
 
     /// Encode addressee name using function
@@ -22,7 +87,7 @@ impl Mailbox {
     where
         F: FnOnce(&str) -> String,
     {
-        Mailbox::new(self.name.clone().map(|s| f(&s)), self.addr.clone())
+        Mailbox::new(self.name.clone().map(|s| f(&s)), self.email.clone())
     }
 }
 
@@ -31,24 +96,26 @@ impl Display for Mailbox {
         if let Some(ref name) = self.name {
             let name = name.trim();
             if !name.is_empty() {
-                return write!(f, "{} <{}>", name, self.addr);
+                f.write_str(&name)?;
+                f.write_str(" <")?;
+                self.email.fmt(f)?;
+                return f.write_char('>');
             }
         }
-
-        write!(f, "{}", self.addr)
+        self.email.fmt(f)
     }
 }
 
 impl FromStr for Mailbox {
-    type Err = String;
+    type Err = MailboxError;
 
     fn from_str(src: &str) -> Result<Mailbox, Self::Err> {
         match (src.find('<'), src.find('>')) {
-            (Some(addr_open), Some(addr_close)) => {
+            (Some(addr_open), Some(addr_close)) if addr_open < addr_close => {
                 let name = src.split_at(addr_open).0;
                 let addr_open = addr_open + 1;
                 let addr = src.split_at(addr_open).1.split_at(addr_close - addr_open).0;
-                let addr = addr.parse().map_err(|AddrError { msg }| msg)?;
+                let addr = addr.parse()?;
                 let name = name.trim();
                 let name = if name.is_empty() {
                     None
@@ -57,8 +124,9 @@ impl FromStr for Mailbox {
                 };
                 Ok(Mailbox::new(name, addr))
             }
+            (Some(_), _) => Err(MailboxError::Unbalanced),
             _ => {
-                let addr = src.parse().map_err(|AddrError { msg }| msg)?;
+                let addr = src.parse()?;
                 Ok(Mailbox::new(None, addr))
             }
         }
@@ -66,27 +134,41 @@ impl FromStr for Mailbox {
 }
 
 /// List or email mailboxes
+///
+/// This type contains a sequence of mailboxes (_Some Name \<user@domain.tld\>, Another Name \<other@domain.tld\>, withoutname@domain.tld, ..._).
+///
+/// **NOTE**: Enable feature "serde" to be able serialize/deserialize it using [serde](https://serde.rs/).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mailboxes(Vec<Mailbox>);
 
 impl Mailboxes {
     /// Create mailboxes list
+    #[inline]
     pub fn new() -> Self {
         Mailboxes(Vec::new())
     }
 
     /// Add mailbox to a list
+    #[inline]
     pub fn with(mut self, mbox: Mailbox) -> Self {
         self.0.push(mbox);
         self
     }
 
+    /// Add mailbox to a list
+    #[inline]
+    pub fn push(&mut self, mbox: Mailbox) {
+        self.0.push(mbox);
+    }
+
     /// Extract first mailbox
+    #[inline]
     pub fn into_single(self) -> Option<Mailbox> {
         self.into()
     }
 
     /// Iterate over mailboxes
+    #[inline]
     pub fn iter(&self) -> Iter<Mailbox> {
         self.0.iter()
     }
@@ -157,20 +239,20 @@ impl Display for Mailboxes {
 }
 
 impl FromStr for Mailboxes {
-    type Err = String;
+    type Err = MailboxError;
 
     fn from_str(src: &str) -> Result<Self, Self::Err> {
         src.split(',')
             .map(|m| {
-                m.trim().parse().and_then(|Mailbox { name, addr }| {
+                m.trim().parse().and_then(|Mailbox { name, email }| {
                     if let Some(name) = name {
                         if let Some(name) = utf8_b::decode(&name) {
-                            Ok(Mailbox::new(Some(name), addr))
+                            Ok(Mailbox::new(Some(name), email))
                         } else {
-                            Err("Unable to decode utf8b".into())
+                            Err(MailboxError::InvalidUtf8b)
                         }
                     } else {
-                        Ok(Mailbox::new(None, addr))
+                        Ok(Mailbox::new(None, email))
                     }
                 })
             }).collect::<Result<Vec<_>, _>>()
@@ -178,16 +260,40 @@ impl FromStr for Mailboxes {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum MailboxError {
+    MissingParts,
+    Unbalanced,
+    InvalidUser,
+    InvalidDomain,
+    InvalidUtf8b,
+}
+
+impl Error for MailboxError {}
+
+impl Display for MailboxError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        use self::MailboxError::*;
+        match self {
+            MissingParts => f.write_str("Missing domain or user"),
+            Unbalanced => f.write_str("Unbalanced angle bracket"),
+            InvalidUser => f.write_str("Invalid email user"),
+            InvalidDomain => f.write_str("Invalid email domain"),
+            InvalidUtf8b => f.write_str("Invalud UTF8b data"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::{Address, Mailbox};
+    use super::Mailbox;
 
     #[test]
     fn mailbox_format_address_only() {
         assert_eq!(
             format!(
                 "{}",
-                Mailbox::new(None, Address::new("kayo@example.com").unwrap())
+                Mailbox::new(None, "kayo@example.com".parse().unwrap())
             ),
             "kayo@example.com"
         );
@@ -198,7 +304,7 @@ mod test {
         assert_eq!(
             format!(
                 "{}",
-                Mailbox::new(Some("K.".into()), Address::new("kayo@example.com").unwrap())
+                Mailbox::new(Some("K.".into()), "kayo@example.com".parse().unwrap())
             ),
             "K. <kayo@example.com>"
         );
@@ -209,7 +315,7 @@ mod test {
         assert_eq!(
             format!(
                 "{}",
-                Mailbox::new(Some("".into()), Address::new("kayo@example.com").unwrap())
+                Mailbox::new(Some("".into()), "kayo@example.com".parse().unwrap())
             ),
             "kayo@example.com"
         );
@@ -220,10 +326,7 @@ mod test {
         assert_eq!(
             format!(
                 "{}",
-                Mailbox::new(
-                    Some(" K. ".into()),
-                    Address::new("kayo@example.com").unwrap()
-                )
+                Mailbox::new(Some(" K. ".into()), "kayo@example.com".parse().unwrap())
             ),
             "K. <kayo@example.com>"
         );

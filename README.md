@@ -14,6 +14,7 @@ This project aims to provide a proper strongly typed way to build and parse emai
 * Support for headers with unicode values
 * Support for **MIME 1.0** multipart contents
 * Streaming messages to save memory usage
+* Email `Address`, `Mailbox` and `Mailboxes` types
 
 ## Usage
 
