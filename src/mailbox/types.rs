@@ -10,7 +10,7 @@ use utf8_b;
 /// This type contains email in canonical form (_user@domain.tld_).
 ///
 /// **NOTE**: Enable feature "serde" to be able serialize/deserialize it using [serde](https://serde.rs/).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct Address {
     /// User part
     pub user: String,
@@ -66,7 +66,7 @@ impl FromStr for Address {
 /// This type contains email address and the sender/recipient name (_Some Name \<user@domain.tld\>_ or _withoutname@domain.tld_).
 ///
 /// **NOTE**: Enable feature "serde" to be able serialize/deserialize it using [serde](https://serde.rs/).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct Mailbox {
     /// User name part
     pub name: Option<String>,
@@ -138,7 +138,7 @@ impl FromStr for Mailbox {
 /// This type contains a sequence of mailboxes (_Some Name \<user@domain.tld\>, Another Name \<other@domain.tld\>, withoutname@domain.tld, ..._).
 ///
 /// **NOTE**: Enable feature "serde" to be able serialize/deserialize it using [serde](https://serde.rs/).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct Mailboxes(Vec<Mailbox>);
 
 impl Mailboxes {
