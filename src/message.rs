@@ -1,5 +1,5 @@
 use super::{Body, Mailbox};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut, IntoBuf};
 use encoder::{EncoderError, EncoderStream};
 use futures::{Async, Poll, Stream};
 use header::{self, EmailDate, Header, Headers, MailboxesHeader};
@@ -215,7 +215,7 @@ pub struct MessageStream<B> {
 impl<B> Stream for MessageStream<B>
 where
     B: Payload,
-    B::Data: Into<Bytes>,
+    B::Data: IntoBuf,
 {
     type Item = Bytes;
     type Error = EncoderError<B::Error>;

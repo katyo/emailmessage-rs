@@ -1,8 +1,8 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut, IntoBuf};
 use encoder::{EncoderError, EncoderStream};
 use futures::{Async, Poll, Stream};
 use header::{ContentTransferEncoding, ContentType, Header, Headers};
-use hyper::body::{Chunk, Payload};
+use hyper::body::Payload;
 use mime::Mime;
 use std::collections::VecDeque;
 use std::error::Error;
@@ -10,10 +10,11 @@ use std::fmt::{Display, Error as FmtError, Formatter, Result as FmtResult};
 use std::mem::replace;
 use std::str::from_utf8;
 use textnonce::TextNonce;
-use Body;
+use {Body, Chunk};
 
 /// MIME part variants
 ///
+#[derive(Debug, Clone)]
 pub enum Part<B = Body> {
     /// Single part with content
     ///
@@ -60,7 +61,7 @@ pub enum PartStream<B> {
 impl<B> Stream for PartStream<B>
 where
     B: Payload,
-    B::Data: Into<Bytes>,
+    B::Data: IntoBuf,
 {
     type Item = Bytes;
     type Error = EncoderError<B::Error>;
@@ -89,12 +90,35 @@ where
     }
 }
 
+impl<B> From<PartStream<B>> for Body
+where
+    B: Payload,
+    B::Data: IntoBuf,
+    B::Error: Error + Send + Sync,
+{
+    fn from(stream: PartStream<B>) -> Self {
+        Body::wrap_stream(stream.map(Chunk::from).map_err(Box::new))
+    }
+}
+
+impl<B> From<Part<B>> for Body
+where
+    B: Payload,
+    B::Data: IntoBuf,
+    B::Error: Error + Send + Sync,
+{
+    fn from(this: Part<B>) -> Self {
+        Body::from(this.into_stream())
+    }
+}
+
 /// Parts of multipart body
 ///
 pub type Parts<B = Body> = Vec<Part<B>>;
 
 /// Creates builder for single part
 ///
+#[derive(Debug, Clone)]
 pub struct SinglePartBuilder {
     headers: Headers,
 }
@@ -146,6 +170,7 @@ impl Default for SinglePartBuilder {
 ///      .body("Текст письма в уникоде");
 /// ```
 ///
+#[derive(Debug, Clone)]
 pub struct SinglePart<B = Body> {
     headers: Headers,
     body: B,
@@ -237,9 +262,11 @@ where
         self.headers.fmt(f)?;
         "\r\n".fmt(f)?;
 
-        let body = self.body.as_ref().as_bytes().into();
+        let body = self.body.as_ref();
         let mut encoder = EncoderStream::codec(self.encoding());
-        let result = encoder.encode_all(body).map_err(|_| FmtError::default())?;
+        let result = encoder
+            .encode_all(&body.into_buf())
+            .map_err(|_| FmtError::default())?;
         let body = from_utf8(&result).map_err(|_| FmtError::default())?;
 
         body.fmt(f)?;
@@ -257,7 +284,7 @@ pub struct SinglePartStream<B> {
 impl<B> Stream for SinglePartStream<B>
 where
     B: Payload,
-    B::Data: Into<Bytes>,
+    B::Data: IntoBuf,
 {
     type Item = Bytes;
     type Error = EncoderError<B::Error>;
@@ -310,8 +337,31 @@ where
     }
 }
 
+impl<B> From<SinglePartStream<B>> for Body
+where
+    B: Payload,
+    B::Data: IntoBuf,
+    B::Error: Error + Send + Sync,
+{
+    fn from(stream: SinglePartStream<B>) -> Self {
+        Body::wrap_stream(stream.map(Chunk::from).map_err(Box::new))
+    }
+}
+
+impl<B> From<SinglePart<B>> for Body
+where
+    B: Payload,
+    B::Data: IntoBuf,
+    B::Error: Error + Send + Sync,
+{
+    fn from(this: SinglePart<B>) -> Self {
+        Body::from(this.into_stream())
+    }
+}
+
 /// The kind of multipart
 ///
+#[derive(Debug, Clone, Copy)]
 pub enum MultiPartKind {
     /// Mixed kind to combine unrelated content parts
     ///
@@ -367,6 +417,7 @@ impl From<MultiPartKind> for Mime {
 
 /// Multipart builder
 ///
+#[derive(Debug, Clone)]
 pub struct MultiPartBuilder {
     headers: Headers,
 }
@@ -439,6 +490,7 @@ impl Default for MultiPartBuilder {
 
 /// Multipart variant with parts
 ///
+#[derive(Debug, Clone)]
 pub struct MultiPart<B = Body> {
     headers: Headers,
     parts: Parts<B>,
@@ -572,7 +624,7 @@ pub struct MultiPartStream<B> {
 impl<B> Stream for MultiPartStream<B>
 where
     B: Payload,
-    B::Data: Into<Bytes>,
+    B::Data: IntoBuf,
 {
     type Item = Bytes;
     type Error = EncoderError<B::Error>;
@@ -640,7 +692,7 @@ where
 impl<B> Payload for MultiPartStream<B>
 where
     B: Payload,
-    B::Data: Into<Bytes>,
+    B::Data: Buf,
     B::Error: Error + Send + Sync,
 {
     type Data = Chunk;
@@ -669,6 +721,28 @@ where
                 .map(|part| part.into_stream())
                 .collect::<VecDeque<_>>(),
         }
+    }
+}
+
+impl<B> From<MultiPartStream<B>> for Body
+where
+    B: Payload,
+    B::Data: IntoBuf,
+    B::Error: Error + Send + Sync,
+{
+    fn from(stream: MultiPartStream<B>) -> Self {
+        Body::wrap_stream(stream.map(Chunk::from).map_err(Box::new))
+    }
+}
+
+impl<B> From<MultiPart<B>> for Body
+where
+    B: Payload,
+    B::Data: IntoBuf,
+    B::Error: Error + Send + Sync,
+{
+    fn from(this: MultiPart<B>) -> Self {
+        Body::from(this.into_stream())
     }
 }
 
